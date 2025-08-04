@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ajuste Visual - Almacén Zapata ADAPTADO</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f0f2f5;
+      position: relative;
+    }
+    h1, h2, h3 {
+      color: #0d47a1;
+      text-align: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: center;
+    }
+    th {
+      background: #0d47a1;
+      color: white;
+    }
+    #loader {
+      text-align: center;
+      padding: 20px;
+    }
+    .spinner {
+      margin: auto;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #ccc;
+      border-top: 4px solid #0d47a1;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .marca-agua {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      opacity: 0.06;
+      z-index: 0;
+      max-width: 90%;
+      pointer-events: none;
+    }
+    @media print {
+      body { background: white; color: black; }
+      button, #loader { display: none !important; }
+      h2, h3 { color: black !important; }
+      table { page-break-inside: avoid; }
+      table, th, td { font-size: 11pt; }
+      th { background: #e0e0e0 !important; color: black !important; }
+      h2::before { content: "📟 Inventario Impreso — "; }
+    }
+    .fila-parpadeo-rojo {
+      animation: parpadeoFila 1s infinite;
+      background-color: #ffcccc;
+    }
+    @keyframes parpadeoFila {
+      0%, 100% { background-color: #ffcccc; }
+      50% { background-color: white; }
+    }
+    button {
+      position: fixed;
+      right: 20px;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 999;
+    }
+    #btnImprimir {
+      top: 20px;
+      background: #0d47a1;
+      color: white;
+    }
+    #btnGuardar {
+      top: 70px;
+      background: darkgreen;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <img src="logo_proveedora.webp" class="marca-agua" alt="Marca de agua" />
+  <div id="loader">
+    <div class="spinner"></div>
+    <p>Cargando inventario visual...</p>
+  </div>
+  <h1>AJUSTE VISUAL INVENTARIO - ZAPATA</h1>
+  <button id="btnImprimir" onclick="window.print()">🖨️ Imprimir</button>
+  <button id="btnGuardar" onclick="guardarAjustes()">✅ Guardar Ajustes</button>
+  <h3 id="totalGlobal" style="color:#0d47a1; text-align:left; margin-left:20px;">
+    💰 TOTAL INVENTARIO ZAPATA: $0.00
+  </h3>
+  <div id="tablas"></div>
+  <script>
+    // Cargar Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
+      authDomain: "inventariopv-643f1.firebaseapp.com",
+      projectId: "inventariopv-643f1",
+      storageBucket: "inventariopv-643f1.appspot.com",
+      messagingSenderId: "96242533231",
+      appId: "1:96242533231:web:aae75a18fbaf9840529e9a"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const lineas = {};
+    const codigosPorLinea = {};
+    const codigosExentos = ["2382", "3062", "3217", "210004", "7503000134506", "7503000134803"];
+    let totalGlobalInventario = 0;
+
+    async function cargarDatos() {
+      const entradasSnap = await db.collection("almacenes").doc("almacen_zapata").collection("entradas").get();
+      const salidasSnap = await db.collection("almacenes").doc("almacen_zapata").collection("salidas").get();
+      const productosSnap = await db.collection("productos").get();
+
+      const usados = new Set();
+      entradasSnap.forEach(doc => usados.add(doc.data().codigo));
+      salidasSnap.forEach(doc => usados.add(doc.data().codigo));
+
+      const codigosAgrupados = {};
+      productosSnap.forEach(doc => {
+        const data = doc.data();
+        const codigo = doc.id;
+        if (!codigosAgrupados[codigo]) {
+          codigosAgrupados[codigo] = {
+            descripcion: data.Concepto || "Sin descripción",
+            costo: codigosExentos.includes(codigo) ? data["Costo sin Impuesto"] || 0 : (data["Costo sin Impuesto"] || 0) * 1.16,
+            impuesto: codigosExentos.includes(codigo) ? "Exento" : "Con IVA",
+            entradas: 0,
+            salidas: 0
+          };
+        }
+      });
+
+      entradasSnap.forEach(doc => {
+        const d = doc.data();
+        if (codigosAgrupados[d.codigo]) codigosAgrupados[d.codigo].entradas += d.cantidad;
+      });
+
+      salidasSnap.forEach(doc => {
+        const data = doc.data();
+        if (Array.isArray(data.articulos)) {
+          data.articulos.forEach(item => {
+            if (codigosAgrupados[item.codigo]) {
+              codigosAgrupados[item.codigo].salidas += item.cantidad;
+            }
+          });
+        }
+      });
+
+      // Cargar los códigos por cada línea
+      const response = await fetch("codigos_lineas_visual.json");
+      const agrupado = await response.json();
+
+      for (const [linea, codigos] of Object.entries(agrupado)) {
+        await renderTabla(linea, codigos, codigosAgrupados);
+      }
+
+      document.getElementById("loader").style.display = "none";
+    }
+
+    async function renderTabla(nombre, codigos, productos) {
+      const formatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
+      let totalInventarioCosteado = 0;
+
+      let tablaHTML = `<h3>${nombre}</h3>`;
+      tablaHTML += `<table><thead><tr>
+        <th>Código</th>
+        <th>Descripción</th>
+        <th>Costo</th>
+        <th>Impuesto</th>
+        <th>Inventario</th>
+        <th>Inventario Costeado</th>
+        <th>Inventario Físico</th>
+        <th>Diferencia</th>
+      </tr></thead><tbody>`;
+
+      for (const codigo of codigos) {
+        const p = productos[codigo];
+        if (!p) continue;
+        const inventario = p.entradas - p.salidas;
+        const totalCosteado = p.costo * inventario;
+        totalInventarioCosteado += totalCosteado;
+        totalGlobalInventario += totalCosteado;
+
+        const claseFila = inventario < 0 ? 'fila-parpadeo-rojo' : '';
+        tablaHTML += `<tr class="${claseFila}" data-codigo="${codigo}">
+          <td>${codigo}</td>
+          <td>${p.descripcion}</td>
+          <td>${formatter.format(p.costo)}</td>
+          <td>${p.impuesto}</td>
+          <td><strong class="inventario">${inventario}</strong></td>
+          <td><strong>${formatter.format(totalCosteado)}</strong></td>
+          <td><input type="number" data-codigo="${codigo}" class="fisico-input" style="width: 70px;" /></td>
+          <td id="diferencia-${codigo}">0</td>
+        </tr>`;
+      }
+
+      tablaHTML += `</tbody></table><p style="text-align:right; font-weight:bold; color:#0d47a1;">🧾 Total Inventario Costeado: ${formatter.format(totalInventarioCosteado)}</p>`;
+      document.getElementById("tablas").innerHTML += tablaHTML;
+      document.getElementById("totalGlobal").innerText =
+        "💰 TOTAL INVENTARIO ZAPATA: " + formatter.format(totalGlobalInventario);
+    }
+
+    document.addEventListener("input", (e) => {
+      if (e.target.classList.contains("fisico-input")) {
+        const codigo = e.target.dataset.codigo;
+        const input = e.target;
+        const fila = input.closest("tr");
+        const inventario = parseInt(fila.querySelector(".inventario")?.innerText || "0");
+        const valor = input.value;
+
+        const celda = document.getElementById(`diferencia-${codigo}`);
+
+        if (valor === "") {
+          celda.innerText = "0";
+          celda.style.color = "black";
+          return;
+        }
+
+        const fisico = parseInt(valor) || 0;
+        const diferencia = fisico - inventario;
+
+        celda.innerText = diferencia;
+
+        celda.style.color = diferencia < 0 ? "red" : diferencia > 0 ? "green" : "black";
+      }
+    });
+
+    async function guardarAjustes() {
+      const inputs = document.querySelectorAll(".fisico-input");
+      const batch = db.batch();
+      const coleccionEntradas = db.collection("almacenes").doc("almacen_zapata").collection("entradas");
+
+      let ajustesRealizados = 0;
+
+      for (const input of inputs) {
+        const valor = input.value;
+        if (valor === "") continue;
+
+        const fisico = parseInt(valor) || 0;
+        const codigo = input.dataset.codigo;
+        const fila = input.closest("tr");
+        const inventario = parseInt(fila.querySelector(".inventario").innerText) || 0;
+        const diferencia = fisico - inventario;
+
+        if (diferencia !== 0) {
+          const nuevoDoc = coleccionEntradas.doc();
+          batch.set(nuevoDoc, {
+            codigo: codigo,
+            cantidad: diferencia,
+            motivo: "Ajuste de inventario físico",
+            fecha: new Date().toISOString()
+          });
+          ajustesRealizados++;
+        }
+      }
+
+      if (ajustesRealizados > 0) {
+        await batch.commit();
+        alert(`✅ ${ajustesRealizados} ajustes guardados como entradas`);
+        location.reload();
+      } else {
+        alert("No hay diferencias que guardar.");
+      }
+    }
+
+    window.onload = cargarDatos;
+  </script>
+</body>
+</html>
