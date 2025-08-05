@@ -151,6 +151,9 @@
           };
         }
       });
+      const codigosRefrescos = ["060028", "4451", "250010", "7506241", "210010", "7504033", "7503034", "7505035", "14220", "3062", "2382", "3217", "210004", "7503000134803", "7503000134506"];
+const faltantes = codigosRefrescos.filter(cod => !codigosAgrupados[cod]);
+console.log("Códigos de REFRESCOS que no se encontraron en productos:", faltantes);
 
       entradasSnap.forEach(doc => {
         const d = doc.data();
