@@ -123,7 +123,7 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    const codigosExentos = ["2382", "3062", "3217", "210004", "7503000134506", "7503000134803"];
+    const codigosExentos = ["2382","3062","3217","210004","7503000134506","7503000134803"];
     let totalGlobalInventario = 0;
 
     async function cargarDatos() {
@@ -131,53 +131,60 @@
       const salidasSnap = await db.collection("almacenes").doc("almacen_zapata").collection("salidas").get();
       const productosSnap = await db.collection("productos").get();
 
-      // Construir productos agrupados
+      // construir productos
       const codigosAgrupados = {};
       productosSnap.forEach(doc => {
         const data = doc.data();
         const codigo = doc.id;
-        if (!codigosAgrupados[codigo]) {
-          const base = data.costoSinImpuesto || 0;
-          const esExento = codigosExentos.includes(codigo);
-          codigosAgrupados[codigo] = {
-            descripcion: data.concepto || "Sin descripción",
-            costo: esExento ? base : base * 1.16,
-            impuesto: esExento ? "Exento" : "Con IVA",
-            entradas: 0,
-            salidas: 0
-          };
-        }
+        const base = data.costoSinImpuesto || 0;
+        const esExento = codigosExentos.includes(codigo);
+        codigosAgrupados[codigo] = {
+          descripcion: data.concepto || "Sin descripción",
+          costo: esExento ? base : base * 1.16,
+          impuesto: esExento ? "Exento" : "Con IVA",
+          entradas: 0,
+          salidas: 0
+        };
       });
 
-      // Sumar entradas
+      // set de códigos usados (solo con movimiento)
+      const usados = new Set();
+
       entradasSnap.forEach(doc => {
         const data = doc.data();
         if (Array.isArray(data.articulos)) {
           data.articulos.forEach(item => {
             if (codigosAgrupados[item.codigo]) {
               codigosAgrupados[item.codigo].entradas += item.cantidad;
+              usados.add(item.codigo);
             }
           });
         } else {
           if (codigosAgrupados[data.codigo]) {
             codigosAgrupados[data.codigo].entradas += data.cantidad;
+            usados.add(data.codigo);
           }
         }
       });
 
-      // Sumar salidas
       salidasSnap.forEach(doc => {
         const data = doc.data();
         if (Array.isArray(data.articulos)) {
           data.articulos.forEach(item => {
             if (codigosAgrupados[item.codigo]) {
               codigosAgrupados[item.codigo].salidas += item.cantidad;
+              usados.add(item.codigo);
             }
           });
+        } else {
+          if (codigosAgrupados[data.codigo]) {
+            codigosAgrupados[data.codigo].salidas += data.cantidad;
+            usados.add(data.codigo);
+          }
         }
       });
 
-      // Categorías
+      // categorías
       const agrupado = {
         "CHAROLA": ["365","355","357","364","363","7037","2178","14578","7016","7221","1347"],
         "CONTENEDOR": ["7689","7686","2096","1886","2097","1655","1901","7417","352"],
@@ -199,15 +206,15 @@
         "CIMAPLAST": ["7501508800237"]
       };
 
-      // Renderizar categorías
+      // render categorías
       for (const [linea, codigos] of Object.entries(agrupado)) {
         await renderTabla(linea, codigos, codigosAgrupados);
       }
 
-      // Detectar SIN CATEGORÍA
+      // detectar sin categoría (solo usados)
       const codigosTodasCategorias = Object.values(agrupado).flat();
       const sinCategoria = [];
-      for (const codigo of Object.keys(codigosAgrupados)) {
+      for (const codigo of usados) {
         if (!codigosTodasCategorias.includes(codigo)) {
           sinCategoria.push(codigo);
         }
@@ -221,19 +228,13 @@
     }
 
     async function renderTabla(nombre, codigos, productos) {
-      const formatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
+      const formatter = new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'});
       let totalInventarioCosteado = 0;
 
-      let tablaHTML = `<h3>${nombre}</h3>`;
-      tablaHTML += `<table><thead><tr>
-        <th>Código</th>
-        <th>Descripción</th>
-        <th>Costo</th>
-        <th>Impuesto</th>
-        <th>Inventario</th>
-        <th>Inventario Costeado</th>
-        <th>Inventario Físico</th>
-        <th>Diferencia</th>
+      let tablaHTML = `<h3>${nombre}</h3><table><thead><tr>
+        <th>Código</th><th>Descripción</th><th>Costo</th><th>Impuesto</th>
+        <th>Inventario</th><th>Inventario Costeado</th>
+        <th>Inventario Físico</th><th>Diferencia</th>
       </tr></thead><tbody>`;
 
       for (const codigo of codigos) {
@@ -243,8 +244,8 @@
         const totalCosteado = p.costo * inventario;
         totalInventarioCosteado += totalCosteado;
         totalGlobalInventario += totalCosteado;
-
         const claseFila = inventario < 0 ? 'fila-parpadeo-rojo' : '';
+
         tablaHTML += `<tr class="${claseFila}" data-codigo="${codigo}">
           <td>${codigo}</td>
           <td>${p.descripcion}</td>
@@ -252,72 +253,59 @@
           <td>${p.impuesto}</td>
           <td><strong class="inventario">${inventario}</strong></td>
           <td><strong>${formatter.format(totalCosteado)}</strong></td>
-          <td><input type="number" data-codigo="${codigo}" class="fisico-input" style="width: 70px;" /></td>
+          <td><input type="number" data-codigo="${codigo}" class="fisico-input" style="width:70px"/></td>
           <td id="diferencia-${codigo}">0</td>
         </tr>`;
       }
 
-      tablaHTML += `</tbody></table><p style="text-align:right; font-weight:bold; color:#0d47a1;">🧾 Total Inventario Costeado: ${formatter.format(totalInventarioCosteado)}</p>`;
+      tablaHTML += `</tbody></table><p style="text-align:right;font-weight:bold;color:#0d47a1;">
+        🧾 Total Inventario Costeado: ${formatter.format(totalInventarioCosteado)}</p>`;
+
       document.getElementById("tablas").innerHTML += tablaHTML;
       document.getElementById("totalGlobal").innerText =
         "💰 TOTAL INVENTARIO ZAPATA: " + formatter.format(totalGlobalInventario);
     }
 
-    // Mostrar diferencias en vivo
-    document.addEventListener("input", (e) => {
-      if (e.target.classList.contains("fisico-input")) {
-        const codigo = e.target.dataset.codigo;
-        const fila = e.target.closest("tr");
-        const inventario = parseInt(fila.querySelector(".inventario")?.innerText || "0");
-        const valor = e.target.value;
-
-        const celda = document.getElementById(`diferencia-${codigo}`);
-
-        if (valor === "") {
-          celda.innerText = "0";
-          celda.style.color = "black";
-          return;
-        }
-
-        const fisico = parseInt(valor) || 0;
-        const diferencia = fisico - inventario;
-
-        celda.innerText = diferencia;
-        celda.style.color = diferencia < 0 ? "red" : diferencia > 0 ? "green" : "black";
+    document.addEventListener("input",(e)=>{
+      if(e.target.classList.contains("fisico-input")){
+        const codigo=e.target.dataset.codigo;
+        const fila=e.target.closest("tr");
+        const inventario=parseInt(fila.querySelector(".inventario")?.innerText||"0");
+        const valor=e.target.value;
+        const celda=document.getElementById(`diferencia-${codigo}`);
+        if(valor===""){celda.innerText="0";celda.style.color="black";return;}
+        const fisico=parseInt(valor)||0;
+        const diferencia=fisico-inventario;
+        celda.innerText=diferencia;
+        celda.style.color=diferencia<0?"red":diferencia>0?"green":"black";
       }
     });
 
-    // Guardar ajustes
-    async function guardarAjustes() {
-      const inputs = document.querySelectorAll(".fisico-input");
-      const batch = db.batch();
-      const coleccionEntradas = db.collection("almacenes").doc("almacen_zapata").collection("entradas");
-
-      let ajustesRealizados = 0;
-
-      for (const input of inputs) {
-        const valor = input.value;
-        if (valor === "") continue;
-
-        const fisico = parseInt(valor) || 0;
-        const codigo = input.dataset.codigo;
-        const fila = input.closest("tr");
-        const inventario = parseInt(fila.querySelector(".inventario").innerText) || 0;
-        const diferencia = fisico - inventario;
-
-        if (diferencia !== 0) {
-          const nuevoDoc = coleccionEntradas.doc();
-          batch.set(nuevoDoc, {
-            codigo: codigo,
-            cantidad: diferencia,
-            motivo: "Ajuste de inventario físico",
-            fecha: new Date().toISOString()
+    async function guardarAjustes(){
+      const inputs=document.querySelectorAll(".fisico-input");
+      const batch=db.batch();
+      const coleccionEntradas=db.collection("almacenes").doc("almacen_zapata").collection("entradas");
+      let ajustesRealizados=0;
+      for(const input of inputs){
+        const valor=input.value;
+        if(valor==="") continue;
+        const fisico=parseInt(valor)||0;
+        const codigo=input.dataset.codigo;
+        const fila=input.closest("tr");
+        const inventario=parseInt(fila.querySelector(".inventario").innerText)||0;
+        const diferencia=fisico-inventario;
+        if(diferencia!==0){
+          const nuevoDoc=coleccionEntradas.doc();
+          batch.set(nuevoDoc,{
+            codigo:codigo,
+            cantidad:diferencia,
+            motivo:"Ajuste de inventario físico",
+            fecha:new Date().toISOString()
           });
           ajustesRealizados++;
         }
       }
-
-      if (ajustesRealizados > 0) {
+      if(ajustesRealizados>0){
         await batch.commit();
         alert(`✅ ${ajustesRealizados} ajustes guardados como entradas`);
         location.reload();
@@ -326,7 +314,7 @@
       }
     }
 
-    window.onload = cargarDatos;
+    window.onload=cargarDatos;
   </script>
 </body>
 </html>
