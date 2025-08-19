@@ -227,7 +227,7 @@
       document.getElementById("loader").style.display = "none";
     }
 
-   async function renderTabla(nombre, codigos, productos) {
+async function renderTabla(nombre, codigos, productos) {
   const formatter = new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'});
   let totalInventarioCosteado = 0;
 
@@ -237,16 +237,18 @@
     <th>Inventario Físico</th><th>Diferencia</th>
   </tr></thead><tbody>`;
 
-  // ✅ detectar si es categoría de bolsas o camiseta
-  const esBolsaOCamiseta = nombre.toUpperCase().includes("BOLSA") || nombre.toUpperCase() === "CAMISETA";
+  // ✅ detectar si aplica el multiplicador ×25
+  const categoria = nombre.toUpperCase();
+  const aplicaMultiplicador = 
+    categoria.includes("BOLSA") || categoria === "CAMISETA" || categoria === "CIMAPLAST";
 
   for (const codigo of codigos) {
     const p = productos[codigo];
     if (!p) continue;
     const inventario = p.entradas - p.salidas;
 
-    // ✅ multiplicar por 25 si es bolsa o camiseta
-    const totalCosteado = esBolsaOCamiseta 
+    // ✅ multiplicar por 25 si es BOLSA, CAMISETA o CIMAPLAST
+    const totalCosteado = aplicaMultiplicador 
       ? p.costo * inventario * 25
       : p.costo * inventario;
 
