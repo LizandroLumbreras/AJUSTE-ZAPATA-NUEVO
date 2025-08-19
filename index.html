@@ -227,44 +227,52 @@
       document.getElementById("loader").style.display = "none";
     }
 
-    async function renderTabla(nombre, codigos, productos) {
-      const formatter = new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'});
-      let totalInventarioCosteado = 0;
+   async function renderTabla(nombre, codigos, productos) {
+  const formatter = new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'});
+  let totalInventarioCosteado = 0;
 
-      let tablaHTML = `<h3>${nombre}</h3><table><thead><tr>
-        <th>Código</th><th>Descripción</th><th>Costo</th><th>Impuesto</th>
-        <th>Inventario</th><th>Inventario Costeado</th>
-        <th>Inventario Físico</th><th>Diferencia</th>
-      </tr></thead><tbody>`;
+  let tablaHTML = `<h3>${nombre}</h3><table><thead><tr>
+    <th>Código</th><th>Descripción</th><th>Costo</th><th>Impuesto</th>
+    <th>Inventario</th><th>Inventario Costeado</th>
+    <th>Inventario Físico</th><th>Diferencia</th>
+  </tr></thead><tbody>`;
 
-      for (const codigo of codigos) {
-        const p = productos[codigo];
-        if (!p) continue;
-        const inventario = p.entradas - p.salidas;
-        const totalCosteado = p.costo * inventario;
-        totalInventarioCosteado += totalCosteado;
-        totalGlobalInventario += totalCosteado;
-        const claseFila = inventario < 0 ? 'fila-parpadeo-rojo' : '';
+  // ✅ detectar si es categoría de bolsas o camiseta
+  const esBolsaOCamiseta = nombre.toUpperCase().includes("BOLSA") || nombre.toUpperCase() === "CAMISETA";
 
-        tablaHTML += `<tr class="${claseFila}" data-codigo="${codigo}">
-          <td>${codigo}</td>
-          <td>${p.descripcion}</td>
-          <td>${formatter.format(p.costo)}</td>
-          <td>${p.impuesto}</td>
-          <td><strong class="inventario">${inventario}</strong></td>
-          <td><strong>${formatter.format(totalCosteado)}</strong></td>
-          <td><input type="number" data-codigo="${codigo}" class="fisico-input" style="width:70px"/></td>
-          <td id="diferencia-${codigo}">0</td>
-        </tr>`;
-      }
+  for (const codigo of codigos) {
+    const p = productos[codigo];
+    if (!p) continue;
+    const inventario = p.entradas - p.salidas;
 
-      tablaHTML += `</tbody></table><p style="text-align:right;font-weight:bold;color:#0d47a1;">
-        🧾 Total Inventario Costeado: ${formatter.format(totalInventarioCosteado)}</p>`;
+    // ✅ multiplicar por 25 si es bolsa o camiseta
+    const totalCosteado = esBolsaOCamiseta 
+      ? p.costo * inventario * 25
+      : p.costo * inventario;
 
-      document.getElementById("tablas").innerHTML += tablaHTML;
-      document.getElementById("totalGlobal").innerText =
-        "💰 TOTAL INVENTARIO ZAPATA: " + formatter.format(totalGlobalInventario);
-    }
+    totalInventarioCosteado += totalCosteado;
+    totalGlobalInventario += totalCosteado;
+    const claseFila = inventario < 0 ? 'fila-parpadeo-rojo' : '';
+
+    tablaHTML += `<tr class="${claseFila}" data-codigo="${codigo}">
+      <td>${codigo}</td>
+      <td>${p.descripcion}</td>
+      <td>${formatter.format(p.costo)}</td>
+      <td>${p.impuesto}</td>
+      <td><strong class="inventario">${inventario}</strong></td>
+      <td><strong>${formatter.format(totalCosteado)}</strong></td>
+      <td><input type="number" data-codigo="${codigo}" class="fisico-input" style="width:70px"/></td>
+      <td id="diferencia-${codigo}">0</td>
+    </tr>`;
+  }
+
+  tablaHTML += `</tbody></table><p style="text-align:right;font-weight:bold;color:#0d47a1;">
+    🧾 Total Inventario Costeado: ${formatter.format(totalInventarioCosteado)}</p>`;
+
+  document.getElementById("tablas").innerHTML += tablaHTML;
+  document.getElementById("totalGlobal").innerText =
+    "💰 TOTAL INVENTARIO ZAPATA: " + formatter.format(totalGlobalInventario);
+}
 
     document.addEventListener("input",(e)=>{
       if(e.target.classList.contains("fisico-input")){
