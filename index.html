@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ajuste Visual - Almacén Zapata ADAPTADO</title>
+  <title>Ajuste Visual - Almacén Zapata</title>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
   <style>
@@ -111,7 +111,7 @@
   </h3>
   <div id="tablas"></div>
   <script>
-    // Cargar Firebase
+    // Configuración Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
       authDomain: "inventariopv-643f1.firebaseapp.com",
@@ -123,8 +123,6 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    const lineas = {};
-    const codigosPorLinea = {};
     const codigosExentos = ["2382", "3062", "3217", "210004", "7503000134506", "7503000134803"];
     let totalGlobalInventario = 0;
 
@@ -133,33 +131,41 @@
       const salidasSnap = await db.collection("almacenes").doc("almacen_zapata").collection("salidas").get();
       const productosSnap = await db.collection("productos").get();
 
-      const usados = new Set();
-      entradasSnap.forEach(doc => usados.add(doc.data().codigo));
-      salidasSnap.forEach(doc => usados.add(doc.data().codigo));
-
+      // Construir productos agrupados
       const codigosAgrupados = {};
       productosSnap.forEach(doc => {
         const data = doc.data();
         const codigo = doc.id;
         if (!codigosAgrupados[codigo]) {
+          const base = data.costoSinImpuesto || 0;
+          const esExento = codigosExentos.includes(codigo);
           codigosAgrupados[codigo] = {
-            descripcion: data.Concepto || "Sin descripción",
-            costo: codigosExentos.includes(codigo) ? data["Costo sin Impuesto"] || 0 : (data["Costo sin Impuesto"] || 0) * 1.16,
-            impuesto: codigosExentos.includes(codigo) ? "Exento" : "Con IVA",
+            descripcion: data.concepto || "Sin descripción",
+            costo: esExento ? base : base * 1.16,
+            impuesto: esExento ? "Exento" : "Con IVA",
             entradas: 0,
             salidas: 0
           };
         }
       });
-      const codigosRefrescos = ["060028", "4451", "250010", "7506241", "210010", "7504033", "7503034", "7505035", "14220", "3062", "2382", "3217", "210004", "7503000134803", "7503000134506"];
-const faltantes = codigosRefrescos.filter(cod => !codigosAgrupados[cod]);
-console.log("Códigos de REFRESCOS que no se encontraron en productos:", faltantes);
 
+      // Sumar entradas
       entradasSnap.forEach(doc => {
-        const d = doc.data();
-        if (codigosAgrupados[d.codigo]) codigosAgrupados[d.codigo].entradas += d.cantidad;
+        const data = doc.data();
+        if (Array.isArray(data.articulos)) {
+          data.articulos.forEach(item => {
+            if (codigosAgrupados[item.codigo]) {
+              codigosAgrupados[item.codigo].entradas += item.cantidad;
+            }
+          });
+        } else {
+          if (codigosAgrupados[data.codigo]) {
+            codigosAgrupados[data.codigo].entradas += data.cantidad;
+          }
+        }
       });
 
+      // Sumar salidas
       salidasSnap.forEach(doc => {
         const data = doc.data();
         if (Array.isArray(data.articulos)) {
@@ -171,31 +177,44 @@ console.log("Códigos de REFRESCOS que no se encontraron en productos:", faltant
         }
       });
 
-      // Cargar los códigos por cada línea
-    const agrupado = {
-  "CHAROLA": ["365", "355", "357", "364", "363", "7037", "2178", "14578", "7016", "7221", "1347"],
-  "CONTENEDOR": ["7689", "7686", "2096", "1886", "2097", "1655", "1901", "7417", "352"],
-  "PLATOS TERMICOS": ["12146", "2409", "2410", "020013", "2411", "2188", "2408", "2190", "3987", "3614"],
-  "CHAROLAS COLORES": ["1347", "020124", "020126", "020127", "020053", "2351", "1349", "055500500", "2350", "450029", "3864", "021788", "3866", "3865", "3738", "14579"],
-  "CONTENEDORES NEGROS": ["1020321", "020270", "1450066", "450065", "1750178", "750178", "750182"],
-  "VASOS PLASTICO": ["020167", "020262", "2397", "2161", "2162", "5853", "4410", "5078", "1502", "1623", "4395", "1386413864", "020066", "5666", "450083", "020183"],
-  "LINEA BIO": ["020319", "020318", "020297", "020306", "020303", "020300", "020312", "020310", "450089", "450100"],
-  "LINEA EU": ["450091", "450090", "141450", "450086", "450087", "450101", "450095", "32322050"],
-  "POPOTE BIO": ["450079", "450081"],
-  "BIO CONTENEDOR": ["7701200", "7702200", "8802200", "8801200", "9902200", "9901200"],
-  "JAGUAR Y JUGUERO": ["020051", "020054", "2033", "2164", "020053", "1484", "2161", "1639", "2162", "020052", "020055", "1356", "1355", "290005", "1409", "1486", "1485", "450053", "450002"],
-  "REFRESCOS": ["060028", "4451", "250010", "7506241", "210010", "7504033", "7503034", "7505035", "14220", "3062", "2382", "3217", "210004", "7503000134803", "7503000134506"],
-  "VASOS": ["104104", "106106", "108108", "110110", "112112", "114114", "116116", "132132", "704704", "706706", "708708", "712712", "716716", "732732", "760760", "404404", "406406", "408408", "410410", "412412", "414414", "416416", "516516", "120120", "7501431206038", "7501825638728", "7501825638742", "020103", "5283", "5282"],
-  "CAMISETA": ["4660", "7702", "13609", "150100", "150103", "150104", "7503009154239", "7503009154246", "7503024644128", "7503024644951"],
-  "BOLSA_CAMISETA": ["150101", "150102"],
-  "BOLSA_PLANA": ["142535", "142540", "144060", "145070", "147090", "7503009154307"],
-  "BOLSA_ROLLO": ["131825", "132030", "134060"],
-  "CIMAPLAST": ["7501508800237"]
-};
+      // Categorías
+      const agrupado = {
+        "CHAROLA": ["365","355","357","364","363","7037","2178","14578","7016","7221","1347"],
+        "CONTENEDOR": ["7689","7686","2096","1886","2097","1655","1901","7417","352"],
+        "PLATOS TERMICOS": ["12146","2409","2410","020013","2411","2188","2408","2190","3987","3614"],
+        "CHAROLAS COLORES": ["1347","020124","020126","020127","020053","2351","1349","055500500","2350","450029","3864","021788","3866","3865","3738","14579"],
+        "CONTENEDORES NEGROS": ["1020321","020270","1450066","450065","1750178","750178","750182"],
+        "VASOS PLASTICO": ["020167","020262","2397","2161","2162","5853","4410","5078","1502","1623","4395","1386413864","020066","5666","450083","020183"],
+        "LINEA BIO": ["020319","020318","020297","020306","020303","020300","020312","020310","450089","450100"],
+        "LINEA EU": ["450091","450090","141450","450086","450087","450101","450095","32322050"],
+        "POPOTE BIO": ["450079","450081"],
+        "BIO CONTENEDOR": ["7701200","7702200","8802200","8801200","9902200","9901200"],
+        "JAGUAR Y JUGUERO": ["020051","020054","2033","2164","020053","1484","2161","1639","2162","020052","020055","1356","1355","290005","1409","1486","1485","450053","450002"],
+        "REFRESCOS": ["060028","4451","250010","7506241","210010","7504033","7503034","7505035","14220","3062","2382","3217","210004","7503000134803","7503000134506"],
+        "VASOS": ["104104","106106","108108","110110","112112","114114","116116","132132","704704","706706","708708","712712","716716","732732","760760","404404","406406","408408","410410","412412","414414","416416","516516","120120","7501431206038","7501825638728","7501825638742","020103","5283","5282"],
+        "CAMISETA": ["4660","7702","13609","150100","150103","150104","7503009154239","7503009154246","7503024644128","7503024644951"],
+        "BOLSA_CAMISETA": ["150101","150102"],
+        "BOLSA_PLANA": ["142535","142540","144060","145070","147090","7503009154307"],
+        "BOLSA_ROLLO": ["131825","132030","134060"],
+        "CIMAPLAST": ["7501508800237"]
+      };
 
-
+      // Renderizar categorías
       for (const [linea, codigos] of Object.entries(agrupado)) {
         await renderTabla(linea, codigos, codigosAgrupados);
+      }
+
+      // Detectar SIN CATEGORÍA
+      const codigosTodasCategorias = Object.values(agrupado).flat();
+      const sinCategoria = [];
+      for (const codigo of Object.keys(codigosAgrupados)) {
+        if (!codigosTodasCategorias.includes(codigo)) {
+          sinCategoria.push(codigo);
+        }
+      }
+
+      if (sinCategoria.length > 0) {
+        await renderTabla("SIN CATEGORÍA", sinCategoria, codigosAgrupados);
       }
 
       document.getElementById("loader").style.display = "none";
@@ -244,13 +263,13 @@ console.log("Códigos de REFRESCOS que no se encontraron en productos:", faltant
         "💰 TOTAL INVENTARIO ZAPATA: " + formatter.format(totalGlobalInventario);
     }
 
+    // Mostrar diferencias en vivo
     document.addEventListener("input", (e) => {
       if (e.target.classList.contains("fisico-input")) {
         const codigo = e.target.dataset.codigo;
-        const input = e.target;
-        const fila = input.closest("tr");
+        const fila = e.target.closest("tr");
         const inventario = parseInt(fila.querySelector(".inventario")?.innerText || "0");
-        const valor = input.value;
+        const valor = e.target.value;
 
         const celda = document.getElementById(`diferencia-${codigo}`);
 
@@ -264,11 +283,11 @@ console.log("Códigos de REFRESCOS que no se encontraron en productos:", faltant
         const diferencia = fisico - inventario;
 
         celda.innerText = diferencia;
-
         celda.style.color = diferencia < 0 ? "red" : diferencia > 0 ? "green" : "black";
       }
     });
 
+    // Guardar ajustes
     async function guardarAjustes() {
       const inputs = document.querySelectorAll(".fisico-input");
       const batch = db.batch();
