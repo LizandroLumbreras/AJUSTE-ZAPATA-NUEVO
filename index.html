@@ -240,7 +240,7 @@ async function renderTabla(nombre, codigos, productos) {
   // ✅ detectar si aplica el multiplicador ×25
   const categoria = nombre.toUpperCase();
   const aplicaMultiplicador = 
-    categoria.includes("BOLSA") || categoria === "CAMISETA" || categoria === "CIMAPLAST";
+    categoria.includes("BOLSA") || categoria.includes("CAMISETA") || categoria.includes("CIMAPLAST");
 
   for (const codigo of codigos) {
     const p = productos[codigo];
