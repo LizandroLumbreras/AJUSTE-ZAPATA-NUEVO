@@ -159,50 +159,62 @@ async function guardarAjustes() {
 // === 📑 REPORTE TOTALIZADO ===
 document.getElementById("btnReporte").addEventListener("click", generarReporte);
 function generarReporte() {
+  const tablas = document.querySelectorAll("#tablas table");
   let filas = [];
-  document.querySelectorAll("#tablas table tbody tr").forEach(tr => {
-    const celdas = tr.querySelectorAll("td");
-    if (celdas.length >= 5) {
-      const codigo = celdas[0].innerText.trim();
-      const descripcion = celdas[1].innerText.trim();
-      const cantidad = parseFloat(celdas[3].innerText.trim()) || 0;
-      const total = parseFloat(celdas[4].innerText.replace(/[^0-9.]/g,'')) || 0;
-      filas.push({codigo, descripcion, cantidad, total});
-    }
+
+  tablas.forEach(tabla => {
+    const linea = tabla.previousElementSibling?.innerText || "SIN LINEA";
+    tabla.querySelectorAll("tbody tr").forEach(tr => {
+      const celdas = tr.querySelectorAll("td");
+      if (celdas.length >= 5) {
+        const codigo = celdas[0].innerText.trim();
+        const descripcion = celdas[1].innerText.trim();
+        const cantidad = parseFloat(celdas[3].innerText.trim()) || 0;
+        const total = parseFloat(celdas[4].innerText.replace(/[^0-9.]/g,'')) || 0;
+        filas.push({linea, codigo, descripcion, cantidad, total});
+      }
+    });
   });
 
   const totalGlobalReporte = filas.reduce((s,f)=>s+f.total,0);
+
   let html = `
   <html><head><title>Reporte Totalizado</title>
   <style>
     body{font-family:'Poppins',sans-serif;padding:20px;}
     h1{color:#0d47a1;text-align:center;margin-bottom:20px;}
     h2{text-align:right;color:#0d47a1;}
-    table{width:100%;border-collapse:collapse;}
+    h3{color:#0d47a1;margin-top:25px;}
+    table{width:100%;border-collapse:collapse;margin-top:8px;}
     th,td{border:1px solid #ccc;padding:6px;text-align:center;}
     th{background:#0d47a1;color:white;}
-    .total-grande{font-size:22px;font-weight:bold;color:#0d47a1;text-align:right;margin-top:15px;}
+    .total-grande{font-size:22px;font-weight:bold;color:#0d47a1;text-align:right;margin-top:25px;}
     @media print{button{display:none;}}
   </style></head><body>
   <h1>REPORTE TOTALIZADO – INVENTARIO ZAPATA</h1>
-  <h2>Total Global: ${money(totalGlobalReporte)}</h2>
-  <table><thead><tr>
-    <th>Código</th><th>Descripción</th><th>Piezas</th><th>Total</th>
-  </tr></thead><tbody>`;
+  <h2>Total Global: ${money(totalGlobalReporte)}</h2>`;
 
-  filas.forEach(f=>{
+  // Agrupar por línea y conservar el orden original
+  let lineaActual = "";
+  filas.forEach((f, i) => {
+    if (f.linea !== lineaActual) {
+      if (i > 0) html += "</tbody></table>";
+      html += `<h3>${f.linea}</h3>
+      <table><thead><tr><th>Código</th><th>Descripción</th><th>Piezas</th><th>Total</th></tr></thead><tbody>`;
+      lineaActual = f.linea;
+    }
     html += `<tr><td>${f.codigo}</td><td>${f.descripcion}</td><td>${f.cantidad}</td><td>${money(f.total)}</td></tr>`;
   });
 
   html += `</tbody></table>
   <p class="total-grande">TOTAL GENERAL: ${money(totalGlobalReporte)}</p>
-  <button onclick="window.print()">🖨️ Imprimir</button></body></html>`;
+  <button onclick="window.print()">🖨️ Imprimir</button>
+  </body></html>`;
 
   const win = window.open("", "_blank");
   win.document.write(html);
   win.document.close();
 }
-
 window.onload = cargarInventario;
 </script>
 </body>
