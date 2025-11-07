@@ -88,7 +88,7 @@ const multiplicadoresFijos = {
   "18905": 500,
   "7503020773877": 25,
   "7692": 10,
-  "050001": 10,
+  "020003": 10,
   "7502208804747": 25,
   "141825": 25,
   "7502208800176": 40,
@@ -97,10 +97,12 @@ const multiplicadoresFijos = {
   "7502208804990": 4,
   "7502208802378": 20,
   "142535": 25,
-  "7693": 10,
+  "020004": 10,
   "352": 10,
-  "13978": 2
+  "13978": 2,
+  "020247": 1000
 };
+
 
   // === 📊 RENDER DE TABLAS POR LÍNEA ===
   function renderTabla(linea, items) {
@@ -115,8 +117,7 @@ const multiplicadoresFijos = {
     items.forEach(p => {
       const cantidad = Number(p.cantidad) || 0;
       const costo = Number(p.costoSinImpuesto) || 0;
-      const codigoLimpio = (p.codigo || "").replace(/^0+/, ""); // elimina ceros iniciales
-const multiplicar = multiplicadoresFijos[codigoLimpio] || 1;
+const multiplicar = multiplicadoresFijos[p.codigo] || 1;
 const total = cantidad * costo * multiplicar;
       totalLinea += total;
       totalGlobal += total;
