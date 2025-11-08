@@ -50,25 +50,7 @@ const db = firebase.firestore();
 const money = n => new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(n);
 let totalGlobal = 0;
 
-async function cargarInventario() {
-  const snap = await db.collection("almacenes")
-    .doc("almacen_zapata")
-    .collection("entradas")
-    .where("fecha", ">=", "2025-11-06")
-    .get();
-
-  const productos = {};
-  snap.forEach(doc => {
-    const d = doc.data();
-    const linea = (d.linea && d.linea.trim()) || "SIN LINEA";
-    if (!productos[linea]) productos[linea] = [];
-    productos[linea].push({...d, id: doc.id});
-  });
-
-  for (const [linea, items] of Object.entries(productos)) renderTabla(linea, items);
-  document.getElementById("loader").style.display = "none";
-}
-
+// === Multiplicadores por código ===
 const multiplicadoresFijos = {
   "2000733010008": 2,"7503009154239": 25,"752216095737": 40,"990110": 20,"143050": 25,
   "7502208804044": 25,"7702": 25,"7503027332022": 25,"134060": 25,"142540": 25,"4664": 25,
@@ -77,6 +59,82 @@ const multiplicadoresFijos = {
   "142535": 25,"020004": 10,"352": 10,"13978": 2,"020247": 1000
 };
 
+// === Cargar inventario desde entradas y salidas ===
+async function cargarInventario() {
+  const FECHA_CORTE = "2025-11-06";
+  const entradasSnap = await db.collection("almacenes")
+    .doc("almacen_zapata").collection("entradas")
+    .where("fecha", ">=", FECHA_CORTE).get();
+
+  const salidasSnap = await db.collection("almacenes")
+    .doc("almacen_zapata").collection("salidas")
+    .where("fecha", ">=", FECHA_CORTE).get();
+
+  const stock = {};
+
+  // === 🔹 SUMAR ENTRADAS ===
+  entradasSnap.forEach(doc => {
+    const d = doc.data();
+    if (Array.isArray(d.conceptos_detalle)) {
+      d.conceptos_detalle.forEach(c => {
+        const codigo = String(c.productoId || "").trim();
+        if (!codigo) return;
+        stock[codigo] = (stock[codigo] || 0) + (Number(c.cantidad) || 0);
+      });
+    } else if (d.codigo && d.cantidad) {
+      const codigo = String(d.codigo).trim();
+      stock[codigo] = (stock[codigo] || 0) + (Number(d.cantidad) || 0);
+    }
+  });
+
+  // === 🔹 RESTAR SALIDAS ===
+  salidasSnap.forEach(doc => {
+    const d = doc.data();
+    if (Array.isArray(d.productos)) {
+      d.productos.forEach(p => {
+        const codigo = String(p.productoId || p.codigo || "").trim();
+        if (!codigo) return;
+        stock[codigo] = (stock[codigo] || 0) - (Number(p.cantidad) || 0);
+      });
+    } else if (d.codigo && d.cantidad) {
+      const codigo = String(d.codigo).trim();
+      stock[codigo] = (stock[codigo] || 0) - (Number(d.cantidad) || 0);
+    }
+  });
+
+  // === 🔹 CONSTRUIR TABLA ===
+  const productos = {};
+  for (const codigo in stock) {
+    if (stock[codigo] <= 0) continue;
+    const linea = "INVENTARIO DESDE 06/NOV";
+    if (!productos[linea]) productos[linea] = [];
+    productos[linea].push({
+      id: codigo,
+      codigo,
+      descripcion: codigo,
+      cantidad: stock[codigo],
+      costoSinImpuesto: 0
+    });
+  }
+
+  // === Cargar descripciones y costos desde "productos" ===
+  for (const linea in productos) {
+    for (const p of productos[linea]) {
+      const prodSnap = await db.collection("productos").doc(p.codigo).get();
+      if (prodSnap.exists) {
+        const d = prodSnap.data();
+        p.descripcion = d.concepto || d.descripcion || p.codigo;
+        p.costoSinImpuesto = d.costoSinImpuesto || 0;
+      }
+    }
+  }
+
+  // Renderizar
+  for (const [linea, items] of Object.entries(productos)) renderTabla(linea, items);
+  document.getElementById("loader").style.display = "none";
+}
+
+// === Renderizar tabla ===
 function renderTabla(linea, items) {
   const cont = document.getElementById("tablas");
   let totalLinea = 0;
@@ -95,8 +153,8 @@ function renderTabla(linea, items) {
     totalGlobal += total;
 
     html += `<tr data-id="${p.id}">
-      <td>${p.codigo || ""}</td>
-      <td>${p.descripcion || ""}</td>
+      <td>${p.codigo}</td>
+      <td>${p.descripcion}</td>
       <td>${money(costo)}</td>
       <td class="cantidad">${cantidad}</td>
       <td>${money(total)}</td>
@@ -109,9 +167,11 @@ function renderTabla(linea, items) {
   <p style="text-align:right;font-weight:bold;color:#0d47a1;">
   Total Línea ${linea}: ${money(totalLinea)}</p>`;
   cont.innerHTML += html;
-  document.getElementById("totalGlobal").textContent = "💰 TOTAL INVENTARIO: " + money(totalGlobal);
+  document.getElementById("totalGlobal").textContent =
+    "💰 TOTAL INVENTARIO: " + money(totalGlobal);
 }
 
+// === Calcular diferencias en tiempo real ===
 document.addEventListener("input", e => {
   if (e.target.classList.contains("fisico")) {
     const tr = e.target.closest("tr");
@@ -124,6 +184,7 @@ document.addEventListener("input", e => {
   }
 });
 
+// === Guardar ajustes ===
 async function guardarAjustes() {
   const inputs = document.querySelectorAll(".fisico");
   let ajustes = 0;
@@ -138,7 +199,8 @@ async function guardarAjustes() {
     const nuevo = parseInt(val);
     const dif = nuevo - cant;
     if (dif !== 0) {
-      const ref = db.collection("almacenes").doc("almacen_zapata").collection("entradas").doc(id);
+      const ref = db.collection("almacenes")
+        .doc("almacen_zapata").collection("entradas").doc(id);
       batch.update(ref, {
         cantidad: nuevo,
         ultimaModificacion: new Date().toISOString(),
@@ -156,7 +218,7 @@ async function guardarAjustes() {
   } else alert("No hay diferencias que guardar.");
 }
 
-// === 📑 REPORTE TOTALIZADO ===
+// === Generar reporte totalizado ===
 document.getElementById("btnReporte").addEventListener("click", generarReporte);
 function generarReporte() {
   const tablas = document.querySelectorAll("#tablas table");
@@ -177,7 +239,6 @@ function generarReporte() {
   });
 
   const totalGlobalReporte = filas.reduce((s,f)=>s+f.total,0);
-
   let html = `
   <html><head><title>Reporte Totalizado</title>
   <style>
@@ -194,7 +255,6 @@ function generarReporte() {
   <h1>REPORTE TOTALIZADO – INVENTARIO ZAPATA</h1>
   <h2>Total Global: ${money(totalGlobalReporte)}</h2>`;
 
-  // Agrupar por línea y conservar el orden original
   let lineaActual = "";
   filas.forEach((f, i) => {
     if (f.linea !== lineaActual) {
@@ -215,6 +275,7 @@ function generarReporte() {
   win.document.write(html);
   win.document.close();
 }
+
 window.onload = cargarInventario;
 </script>
 </body>
