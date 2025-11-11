@@ -106,7 +106,7 @@ async function cargarInventario() {
   const productos = {};
   for (const codigo in stock) {
     if (stock[codigo] <= 0) continue;
-    const linea = "INVENTARIO DESDE 06/NOV";
+    const linea = "INVENTARIO";
     if (!productos[linea]) productos[linea] = [];
     productos[linea].push({
       id: codigo,
