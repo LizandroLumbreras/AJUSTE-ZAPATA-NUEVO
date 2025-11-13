@@ -81,23 +81,21 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Fecha base para inventario inicial
-const FECHA_INICIAL = new Date("2025-11-06");
+// Fecha base inventario inicial
+const FECHA_INICIAL = new Date("2025-11-06T00:00:00");
 
-// ORDEN PERSONALIZADO DE LÍNEAS
-const ordenLineas = [
-  "REYMA",
-  "JAGUAR",
-  "BIOPLAST",
-  "CONVERMEX",
-  "BOLSAS PLASTICAS",
-  "PLASTIENVASE",
-  "DESECHABLE",
-  "OTROS"
-];
+// Función robusta para manejar Timestamp o String
+function normalizarFecha(f) {
+  if (!f) return new Date("2000-01-01");
+  if (typeof f === "object" && f.toDate) return f.toDate(); // Timestamp Firestore
+  return new Date(f);
+}
 
 let inventarioGlobal = {};
 
+// -------------------------------------
+// CARGAR INVENTARIO
+// -------------------------------------
 async function cargarInventario() {
   let totales = {}; 
 
@@ -110,19 +108,27 @@ async function cargarInventario() {
   snapEntradas.forEach(doc => {
     const d = doc.data();
 
-    const fechaEntrada = new Date(d.fechaDistribucion ?? d.fecha ?? "2000-01-01");
+    const fechaEntrada = normalizarFecha(d.fechaDistribucion ?? d.fecha);
     const linea = d.linea ?? detectarLinea(d.descripcion);
+    const codigo = d.codigo ?? d.productoId;
 
-    if (d.tipoMovimiento === "entrada_inicial" && d.fecha === "2025-11-06") {
-      agregarEntrada(d.codigo, d.descripcion, linea, d.cantidad);
+    if (!codigo) return;
+
+    // Inventario inicial exacto
+    if (d.tipoMovimiento === "entrada_inicial" &&
+        normalizarFecha(d.fecha).getTime() === FECHA_INICIAL.getTime()) {
+
+      agregarEntrada(codigo, d.descripcion, linea, d.cantidad);
     }
 
-    if (fechaEntrada > FECHA_INICIAL) {
-      const codigo = d.codigo ?? d.productoId;
+    // Todas las entradas normales y ajustes posteriores a esa fecha
+    if (
+      ["entrada", "ajuste_manual", "transferencia", "entrada_inicial"].includes(d.tipoMovimiento) &&
+      fechaEntrada >= FECHA_INICIAL
+    ) {
       agregarEntrada(codigo, d.descripcion, linea, d.cantidad);
     }
   });
-
 
   // ======================
   // 2) LEER SALIDAS
@@ -132,71 +138,67 @@ async function cargarInventario() {
 
   snapSalidas.forEach(doc => {
     const d = doc.data();
-    const fechaSalida = new Date(d.fecha);
+    const fechaSalida = normalizarFecha(d.fecha);
 
-    if (fechaSalida >= FECHA_INICIAL && Array.isArray(d.articulos)) {
-      d.articulos.forEach(a => {
-        const codigo = a.codigo;
-        const descripcion = a.nombre ?? "";
-        const linea = detectarLinea(descripcion);
+    if (!Array.isArray(d.articulos)) return;
+    if (fechaSalida < FECHA_INICIAL) return;
+
+    d.articulos.forEach(a => {
+      const codigo = a.codigo;
+      if (!codigo) return;
+
+      const descripcion = a.nombre ?? "";
+      const linea = detectarLinea(descripcion);
+
+      if (["salida", "ajuste_manual"].includes(d.tipoMovimiento)) {
         agregarSalida(codigo, descripcion, linea, Number(a.cantidad));
-      });
-    }
+      }
+    });
   });
 
+  inventarioGlobal = totales;
+  dibujarTablas(totales);
 
-  // ======================
-  // FUNCIONES
-  // ======================
+  // ---- FUNCIONES INTERNAS -------
   function detectarLinea(desc = "") {
     desc = desc.toUpperCase();
-
     if (desc.includes("REYMA")) return "REYMA";
     if (desc.includes("JAGUAR")) return "JAGUAR";
     if (desc.includes("BIOPLAST")) return "BIOPLAST";
     if (desc.includes("CONVERMEX")) return "CONVERMEX";
     if (desc.includes("BOLSA")) return "BOLSAS PLASTICAS";
     if (desc.includes("PLASTI")) return "PLASTIENVASE";
-
     return "OTROS";
   }
 
   function agregarEntrada(codigo, descripcion, linea, cant) {
-    if (!codigo) return;
-
     if (!totales[codigo]) {
       totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
     }
-
-    totales[codigo].linea = linea;
     totales[codigo].entradas += Number(cant || 0);
   }
 
   function agregarSalida(codigo, descripcion, linea, cant) {
-    if (!codigo) return;
-
     if (!totales[codigo]) {
       totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
     }
-
-    totales[codigo].linea = linea;
     totales[codigo].salidas += Number(cant || 0);
   }
 
-  inventarioGlobal = totales;
-
-  dibujarTablas(totales);
 }
 
+// -------------------------------------
+// DIBUJAR TABLAS POR LÍNEA
+// -------------------------------------
+const ordenLineas = [
+  "REYMA","JAGUAR","BIOPLAST","CONVERMEX",
+  "BOLSAS PLASTICAS","PLASTIENVASE","DESECHABLE","OTROS"
+];
 
-// ==============================
-// 3) CREAR TABLAS POR LÍNEA
-// ==============================
 function dibujarTablas(totales) {
   const cont = document.getElementById("contenedorTablas");
   cont.innerHTML = "";
 
-  // AGRUPAR POR LÍNEA
   let grupos = {};
   Object.keys(totales).forEach(codigo => {
     const item = totales[codigo];
@@ -204,7 +206,6 @@ function dibujarTablas(totales) {
     grupos[item.linea].push({ codigo, ...item });
   });
 
-  // ORDENAR SEGÚN LA LISTA PERSONALIZADA
   ordenLineas.forEach(linea => {
     if (!grupos[linea]) return;
 
@@ -236,17 +237,15 @@ function dibujarTablas(totales) {
   });
 }
 
-
-// ======================
-// 4) GUARDAR AJUSTES
-// ======================
+// -------------------------------------
+// GUARDAR AJUSTES MANUALES
+// -------------------------------------
 document.getElementById("btnGuardar").addEventListener("click", async () => {
   const inputs = document.querySelectorAll(".stock-edit");
 
   for (let input of inputs) {
     const codigo = input.dataset.codigo;
     const nuevo = Number(input.value);
-
     const p = inventarioGlobal[codigo];
     const actual = p.entradas - p.salidas;
 
@@ -264,7 +263,7 @@ document.getElementById("btnGuardar").addEventListener("click", async () => {
       cantidad: cantidadAjuste,
       tipoMovimiento: "ajuste_manual",
       linea: p.linea,
-      fecha: new Date().toISOString().split("T")[0],
+      fecha: new Date().toISOString(),
       usuario: "Ajuste Inventario"
     });
   }
@@ -273,9 +272,9 @@ document.getElementById("btnGuardar").addEventListener("click", async () => {
   cargarInventario();
 });
 
-
 // Ejecutar
 cargarInventario();
+
 </script>
 
 </body>
