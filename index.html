@@ -93,6 +93,10 @@ function normalizarFecha(f) {
 
 let inventarioGlobal = {};
 
+
+// ======================
+// CARGAR INVENTARIO
+// ======================
 async function cargarInventario() {
   let totales = {}; 
 
@@ -104,28 +108,44 @@ async function cargarInventario() {
 
   snapEntradas.forEach(doc => {
     const d = doc.data();
-
     const fecha = normalizarFecha(d.fechaDistribucion ?? d.fecha);
 
-    // Código robusto
-    const codigo = d.codigo ?? d.productoId ?? d.cod ?? null;
-    if (!codigo) return;
+    // =========================================
+    // CASO 1: ENTRADA SIMPLE
+    // =========================================
+    if (!d.conceptos_detalle) {
+      const codigo = d.codigo ?? d.productoId ?? null;
+      if (!codigo) return;
 
-    // Descripción robusta
-    const descripcion = d.descripcion ?? d.nombre ?? d.producto ?? "SIN DESCRIPCION";
+      const descripcion = d.descripcion ?? d.nombre ?? "SIN DESCRIPCION";
+      const cant = Number(d.cantidad ?? 0);
+      const linea = d.linea ?? detectarLinea(descripcion);
 
-    // Cantidad robusta
-    const cant = Number(d.cantidad ?? d.cant ?? d.qty ?? 0);
+      if (fecha >= FECHA_INICIAL) {
+        agregarEntrada(codigo, descripcion, linea, cant);
+      }
+      return;
+    }
 
-    // Línea automática
-    const linea = d.linea ?? detectarLinea(descripcion);
+    // =========================================
+    // CASO 2: ENTRADA DE FACTURA (MÚLTIPLES ARTÍCULOS)
+    // =========================================
+    // Solo si va a Zapata
+    if (d.destino !== "almacen_zapata") return;
 
-    if (fecha < FECHA_INICIAL) return;
+    d.conceptos_detalle.forEach(item => {
+      const codigo = item.productoId ?? null;
+      if (!codigo) return;
 
-    agregarEntrada(codigo, descripcion, linea, cant);
+      const descripcion = item.descripcion ?? item.productoInterno ?? "SIN DESCRIPCION";
+      const cant = Number(item.cantidad ?? 0);
+      const linea = detectarLinea(descripcion);
+
+      if (fecha >= FECHA_INICIAL) {
+        agregarEntrada(codigo, descripcion, linea, cant);
+      }
+    });
   });
-
-
 
   // ======================
   // 2) LEER SALIDAS
@@ -141,47 +161,53 @@ async function cargarInventario() {
     // CASO A: salidas con arreglo "articulos"
     if (Array.isArray(d.articulos)) {
       d.articulos.forEach(a => {
-        const codigo = a.codigo ?? a.productoId ?? a.cod ?? null;
+        const codigo = a.codigo ?? a.productoId ?? null;
         if (!codigo) return;
 
         const descripcion = a.nombre ?? a.descripcion ?? "SIN DESCRIPCION";
-        const cant = Number(a.cantidad ?? a.cant ?? a.qty ?? 0);
+        const cant = Number(a.cantidad ?? 0);
         const linea = detectarLinea(descripcion);
 
         agregarSalida(codigo, descripcion, linea, cant);
       });
     }
 
-    // CASO B: salidas sin arreglo -> documento directo
+    // CASO B: salida simple sin arreglo
     else {
       const codigo = d.codigo ?? d.productoId ?? null;
       if (!codigo) return;
 
       const descripcion = d.descripcion ?? d.nombre ?? "SIN DESCRIPCION";
-      const cant = Number(d.cantidad ?? d.cant ?? 0);
+      const cant = Number(d.cantidad ?? 0);
       const linea = d.linea ?? detectarLinea(descripcion);
 
       agregarSalida(codigo, descripcion, linea, cant);
     }
   });
 
-
-
   inventarioGlobal = totales;
   dibujarTablas(totales);
-
-
-
 
   // ===== FUNCIONES INTERNAS ======
   function detectarLinea(desc = "") {
     desc = desc.toUpperCase();
+
+    // NUEVA CATEGORÍA ESPECIAL
+    if (desc.includes("CHAROLA") ||
+        desc.includes("TERMICO") ||
+        desc.includes("CONTENEDOR") ||
+        desc.includes("MARIEL")) {
+      return "REYMA CHAROLA";
+    }
+
     if (desc.includes("REYMA")) return "REYMA";
     if (desc.includes("JAGUAR")) return "JAGUAR";
     if (desc.includes("BIOPLAST")) return "BIOPLAST";
     if (desc.includes("CONVERMEX")) return "CONVERMEX";
     if (desc.includes("BOLSA")) return "BOLSAS PLASTICAS";
     if (desc.includes("PLASTI")) return "PLASTIENVASE";
+    if (desc.includes("DESECH")) return "DESECHABLE";
+
     return "OTROS";
   }
 
@@ -198,15 +224,23 @@ async function cargarInventario() {
     }
     totales[codigo].salidas += cant;
   }
-
 }
 
-// -------------------------------------
-// DIBUJAR TABLAS POR LÍNEA
-// -------------------------------------
+
+
+// ======================
+// DIBUJAR TABLAS
+// ======================
 const ordenLineas = [
-  "REYMA","JAGUAR","BIOPLAST","CONVERMEX",
-  "BOLSAS PLASTICAS","PLASTIENVASE","DESECHABLE","OTROS"
+  "REYMA",
+  "REYMA CHAROLA",
+  "JAGUAR",
+  "BIOPLAST",
+  "CONVERMEX",
+  "BOLSAS PLASTICAS",
+  "PLASTIENVASE",
+  "DESECHABLE",
+  "OTROS"
 ];
 
 function dibujarTablas(totales) {
@@ -251,9 +285,11 @@ function dibujarTablas(totales) {
   });
 }
 
-// -------------------------------------
-// GUARDAR AJUSTES MANUALES
-// -------------------------------------
+
+
+// ======================
+// GUARDAR AJUSTES
+// ======================
 document.getElementById("btnGuardar").addEventListener("click", async () => {
   const inputs = document.querySelectorAll(".stock-edit");
 
