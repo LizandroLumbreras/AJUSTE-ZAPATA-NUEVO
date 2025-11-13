@@ -93,9 +93,6 @@ function normalizarFecha(f) {
 
 let inventarioGlobal = {};
 
-// -------------------------------------
-// CARGAR INVENTARIO
-// -------------------------------------
 async function cargarInventario() {
   let totales = {}; 
 
@@ -108,27 +105,27 @@ async function cargarInventario() {
   snapEntradas.forEach(doc => {
     const d = doc.data();
 
-    const fechaEntrada = normalizarFecha(d.fechaDistribucion ?? d.fecha);
-    const linea = d.linea ?? detectarLinea(d.descripcion);
-    const codigo = d.codigo ?? d.productoId;
+    const fecha = normalizarFecha(d.fechaDistribucion ?? d.fecha);
 
+    // Código robusto
+    const codigo = d.codigo ?? d.productoId ?? d.cod ?? null;
     if (!codigo) return;
 
-    // Inventario inicial exacto
-    if (d.tipoMovimiento === "entrada_inicial" &&
-        normalizarFecha(d.fecha).getTime() === FECHA_INICIAL.getTime()) {
+    // Descripción robusta
+    const descripcion = d.descripcion ?? d.nombre ?? d.producto ?? "SIN DESCRIPCION";
 
-      agregarEntrada(codigo, d.descripcion, linea, d.cantidad);
-    }
+    // Cantidad robusta
+    const cant = Number(d.cantidad ?? d.cant ?? d.qty ?? 0);
 
-    // Todas las entradas normales y ajustes posteriores a esa fecha
-    if (
-      ["entrada", "ajuste_manual", "transferencia", "entrada_inicial"].includes(d.tipoMovimiento) &&
-      fechaEntrada >= FECHA_INICIAL
-    ) {
-      agregarEntrada(codigo, d.descripcion, linea, d.cantidad);
-    }
+    // Línea automática
+    const linea = d.linea ?? detectarLinea(descripcion);
+
+    if (fecha < FECHA_INICIAL) return;
+
+    agregarEntrada(codigo, descripcion, linea, cant);
   });
+
+
 
   // ======================
   // 2) LEER SALIDAS
@@ -138,28 +135,45 @@ async function cargarInventario() {
 
   snapSalidas.forEach(doc => {
     const d = doc.data();
-    const fechaSalida = normalizarFecha(d.fecha);
+    const fecha = normalizarFecha(d.fecha);
+    if (fecha < FECHA_INICIAL) return;
 
-    if (!Array.isArray(d.articulos)) return;
-    if (fechaSalida < FECHA_INICIAL) return;
+    // CASO A: salidas con arreglo "articulos"
+    if (Array.isArray(d.articulos)) {
+      d.articulos.forEach(a => {
+        const codigo = a.codigo ?? a.productoId ?? a.cod ?? null;
+        if (!codigo) return;
 
-    d.articulos.forEach(a => {
-      const codigo = a.codigo;
+        const descripcion = a.nombre ?? a.descripcion ?? "SIN DESCRIPCION";
+        const cant = Number(a.cantidad ?? a.cant ?? a.qty ?? 0);
+        const linea = detectarLinea(descripcion);
+
+        agregarSalida(codigo, descripcion, linea, cant);
+      });
+    }
+
+    // CASO B: salidas sin arreglo -> documento directo
+    else {
+      const codigo = d.codigo ?? d.productoId ?? null;
       if (!codigo) return;
 
-      const descripcion = a.nombre ?? "";
-      const linea = detectarLinea(descripcion);
+      const descripcion = d.descripcion ?? d.nombre ?? "SIN DESCRIPCION";
+      const cant = Number(d.cantidad ?? d.cant ?? 0);
+      const linea = d.linea ?? detectarLinea(descripcion);
 
-      if (["salida", "ajuste_manual"].includes(d.tipoMovimiento)) {
-        agregarSalida(codigo, descripcion, linea, Number(a.cantidad));
-      }
-    });
+      agregarSalida(codigo, descripcion, linea, cant);
+    }
   });
+
+
 
   inventarioGlobal = totales;
   dibujarTablas(totales);
 
-  // ---- FUNCIONES INTERNAS -------
+
+
+
+  // ===== FUNCIONES INTERNAS ======
   function detectarLinea(desc = "") {
     desc = desc.toUpperCase();
     if (desc.includes("REYMA")) return "REYMA";
@@ -175,14 +189,14 @@ async function cargarInventario() {
     if (!totales[codigo]) {
       totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
     }
-    totales[codigo].entradas += Number(cant || 0);
+    totales[codigo].entradas += cant;
   }
 
   function agregarSalida(codigo, descripcion, linea, cant) {
     if (!totales[codigo]) {
       totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
     }
-    totales[codigo].salidas += Number(cant || 0);
+    totales[codigo].salidas += cant;
   }
 
 }
