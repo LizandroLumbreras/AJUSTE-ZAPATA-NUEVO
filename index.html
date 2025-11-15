@@ -42,21 +42,29 @@
 <h2>Inventario Total – Almacén Zapata</h2>
 
 <table>
- <thead>
+<thead>
    <tr>
      <th>Código</th>
      <th>Descripción</th>
      <th>Entradas</th>
      <th>Salidas</th>
      <th>Existencia</th>
+     <th>Real</th>
+     <th>Diferencia</th>
    </tr>
- </thead>
+</thead>
  <tbody id="tablaInventario"></tbody>
 </table>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { 
+  getFirestore, 
+  collection, 
+  onSnapshot,
+  doc,
+  setDoc
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ----------------------
 // CONFIGURACIÓN FIREBASE
@@ -77,6 +85,7 @@ const tabla = document.getElementById("tablaInventario");
 
 // OBJETO GLOBAL DEL INVENTARIO
 let inventario = {};
+ let inventarioRealLocal = {};
 
 // ----------------------
 // UNIFICADOR DE CÓDIGOS
@@ -149,8 +158,15 @@ function dibujarTabla() {
   tabla.innerHTML = "";
 
   Object.keys(inventario).forEach(id => {
+
     const p = inventario[id];
     const existencia = p.entradas - p.salidas;
+
+    // Obtener el inventario real (si existe)
+    const real = inventarioRealLocal[id] ?? "";
+
+    // Calcular diferencia
+    const diferencia = real === "" ? "" : Number(real) - existencia;
 
     tabla.innerHTML += `
       <tr>
@@ -158,12 +174,43 @@ function dibujarTabla() {
         <td>${p.descripcion}</td>
         <td>${p.entradas}</td>
         <td>${p.salidas}</td>
-        <td class="${existencia < 0 ? 'negativo':'positivo'}">
-          ${existencia}
+        <td class="${existencia < 0 ? 'negativo':'positivo'}">${existencia}</td>
+
+        <!-- CAMPO EDITABLE -->
+        <td>
+          <input 
+            type="number" 
+            value="${real}" 
+            style="width:90px; padding:4px;" 
+            oninput="actualizarReal('${id}', '${p.descripcion}', this.value)"
+          >
         </td>
+
+        <td>${diferencia}</td>
       </tr>
     `;
   });
+}
+ window.actualizarReal = function(codigo, descripcion, valor) {
+  inventarioRealLocal[codigo] = valor;
+
+  // Guardar inmediatamente en Firestore
+  guardarInventarioReal(codigo, descripcion, valor);
+
+  // Refrescar diferencias
+  dibujarTabla();
+};
+async function guardarInventarioReal(codigo, descripcion, valor) {
+  try {
+    await setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
+      codigo,
+      descripcion,
+      inventarioReal: Number(valor),
+      fechaActualizacion: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error("Error guardando real:", e);
+  }
 }
 
 // ----------------------
