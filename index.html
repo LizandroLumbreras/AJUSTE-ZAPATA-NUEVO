@@ -2,328 +2,154 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Inventario Real – Almacén Zapata</title>
+<title>Inventario Total – Almacén Zapata</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
  body{
    font-family: Arial, sans-serif;
-   background:#f2f2f2;
+   background:#f4f4f4;
    padding:20px;
+ }
+ h2{
+   color:#00416A;
+   font-size:26px;
+   margin-bottom:20px;
  }
  table{
    width:100%;
    border-collapse:collapse;
    background:white;
-   margin-bottom:35px;
+   margin-top:15px;
  }
  th,td{
    border:1px solid #ccc;
-   padding:8px;
+   padding:10px;
    text-align:center;
+   font-size:15px;
  }
  th{
    background:#00416A;
    color:white;
  }
- input.stock-edit{
-   width:80px;
-   padding:4px;
-   text-align:center;
- }
- button{
-   background:#00416A;
-   color:white;
-   padding:10px 20px;
-   border:none;
-   border-radius:5px;
-   margin:15px 0;
-   font-weight:bold;
-   cursor:pointer;
- }
- button:hover{
-   background:#003257;
- }
- .lineaTitulo {
-   background:#003257 !important;
-   color:white;
-   font-size:18px;
-   font-weight:bold;
-   text-align:left;
-   padding:10px;
- }
+ .positivo{ color:green; font-weight:bold; }
+ .negativo{ color:red; font-weight:bold; }
 </style>
+
 </head>
 <body>
 
-<h2>Inventario Real – Almacén Zapata</h2>
+<h2>Inventario Total – Almacén Zapata</h2>
 
-<button id="btnGuardar">Guardar Ajustes</button>
+<table>
+ <thead>
+   <tr>
+     <th>Código</th>
+     <th>Descripción</th>
+     <th>Entradas</th>
+     <th>Salidas</th>
+     <th>Existencia</th>
+   </tr>
+ </thead>
+ <tbody id="tablaInventario"></tbody>
+</table>
 
-<div id="contenedorTablas"></div>
-
-<!-- FIREBASE -->
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { 
-  getFirestore, collection, getDocs, addDoc 
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
+// ----------------------
+// CONFIGURACIÓN FIREBASE
+// ----------------------
 const firebaseConfig = {
-  apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
-  authDomain: "inventariopv-643f1.firebaseapp.com",
-  projectId: "inventariopv-643f1",
-  storageBucket: "inventariopv-643f1.appspot.com",
-  messagingSenderId: "96242533231",
-  appId: "1:96242533231:web:d2f1e80b17f123456789"
+  apiKey: "TU_APIKEY",
+  authDomain: "TU_AUTHDOMAIN",
+  projectId: "TU_PROJECTID",
+  storageBucket: "TU_BUCKET",
+  messagingSenderId: "TU_SENDER",
+  appId: "TU_APPID"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Fecha base inventario inicial
-const FECHA_INICIAL = new Date("2025-11-06T00:00:00");
+const tabla = document.getElementById("tablaInventario");
 
-// Función robusta para manejar Timestamp o String
-function normalizarFecha(f) {
-  if (!f) return new Date("2000-01-01");
-  if (typeof f === "object" && f.toDate) return f.toDate(); // Timestamp Firestore
-  return new Date(f);
+// OBJETO GLOBAL DEL INVENTARIO
+let inventario = {};
+
+// ----------------------
+// UNIFICADOR DE CÓDIGOS
+// ----------------------
+function obtenerIdentificador(data) {
+  // ENTRADAS: puede venir "codigo" o "productoID"
+  // SALIDAS: solo viene "codigo"
+
+  if (data.codigo && data.codigo !== "") return data.codigo;
+
+  if (data.productoID && data.productoID !== "") return data.productoID;
+
+  return "SIN-CODIGO"; // fallback
 }
 
-let inventarioGlobal = {};
+// ----------------------
+// FUNCIÓN QUE PROCESA ENTRADAS/SALIDAS
+// ----------------------
+function procesarDatos(coleccion, tipo) {
+  onSnapshot(coleccion, (snap) => {
+    snap.docChanges().forEach(change => {
 
+      const data = change.doc.data();
 
-// ======================
-// CARGAR INVENTARIO
-// ======================
-async function cargarInventario() {
-  let totales = {}; 
+      const id = obtenerIdentificador(data);  // UNIFICAMOS AQUÍ
 
-  // ======================
-  // 1) LEER ENTRADAS
-  // ======================
-  const entradasRef = collection(db, "almacenes", "almacen_zapata", "entradas");
-  const snapEntradas = await getDocs(entradasRef);
-
-  snapEntradas.forEach(doc => {
-    const d = doc.data();
-    const fecha = normalizarFecha(d.fechaDistribucion ?? d.fecha);
-
-    // =========================================
-    // CASO 1: ENTRADA SIMPLE
-    // =========================================
-    if (!d.conceptos_detalle) {
-      const codigo = d.codigo ?? d.productoId ?? null;
-      if (!codigo) return;
-
-      const descripcion = d.descripcion ?? d.nombre ?? "SIN DESCRIPCION";
-      const cant = Number(d.cantidad ?? 0);
-      const linea = d.linea ?? detectarLinea(descripcion);
-
-      if (fecha >= FECHA_INICIAL) {
-        agregarEntrada(codigo, descripcion, linea, cant);
+      if (!inventario[id]) {
+        inventario[id] = {
+          descripcion: data.descripcion || "-",
+          entradas: 0,
+          salidas: 0
+        };
       }
-      return;
-    }
 
-    // =========================================
-    // CASO 2: ENTRADA DE FACTURA (MÚLTIPLES ARTÍCULOS)
-    // =========================================
-    // Solo si va a Zapata
-    if (d.destino !== "almacen_zapata") return;
+      const qty = Number(data.cantidad) || 0;
 
-    d.conceptos_detalle.forEach(item => {
-      const codigo = item.productoId ?? null;
-      if (!codigo) return;
-
-      const descripcion = item.descripcion ?? item.productoInterno ?? "SIN DESCRIPCION";
-      const cant = Number(item.cantidad ?? 0);
-      const linea = detectarLinea(descripcion);
-
-      if (fecha >= FECHA_INICIAL) {
-        agregarEntrada(codigo, descripcion, linea, cant);
-      }
+      if (tipo === "entrada") inventario[id].entradas += qty;
+      if (tipo === "salida")  inventario[id].salidas  += qty;
     });
+
+    dibujarTabla();
   });
-
-  // ======================
-  // 2) LEER SALIDAS
-  // ======================
-  const salidasRef = collection(db, "almacenes", "almacen_zapata", "salidas");
-  const snapSalidas = await getDocs(salidasRef);
-
-  snapSalidas.forEach(doc => {
-    const d = doc.data();
-    const fecha = normalizarFecha(d.fecha);
-    if (fecha < FECHA_INICIAL) return;
-
-    // CASO A: salidas con arreglo "articulos"
-    if (Array.isArray(d.articulos)) {
-      d.articulos.forEach(a => {
-        const codigo = a.codigo ?? a.productoId ?? null;
-        if (!codigo) return;
-
-        const descripcion = a.nombre ?? a.descripcion ?? "SIN DESCRIPCION";
-        const cant = Number(a.cantidad ?? 0);
-        const linea = detectarLinea(descripcion);
-
-        agregarSalida(codigo, descripcion, linea, cant);
-      });
-    }
-
-    // CASO B: salida simple sin arreglo
-    else {
-      const codigo = d.codigo ?? d.productoId ?? null;
-      if (!codigo) return;
-
-      const descripcion = d.descripcion ?? d.nombre ?? "SIN DESCRIPCION";
-      const cant = Number(d.cantidad ?? 0);
-      const linea = d.linea ?? detectarLinea(descripcion);
-
-      agregarSalida(codigo, descripcion, linea, cant);
-    }
-  });
-
-  inventarioGlobal = totales;
-  dibujarTablas(totales);
-
-  // ===== FUNCIONES INTERNAS ======
-  function detectarLinea(desc = "") {
-    desc = desc.toUpperCase();
-
-    // NUEVA CATEGORÍA ESPECIAL
-    if (desc.includes("CHAROLA") ||
-        desc.includes("TERMICO") ||
-        desc.includes("CONTENEDOR") ||
-        desc.includes("MARIEL")) {
-      return "REYMA CHAROLA";
-    }
-
-    if (desc.includes("REYMA")) return "REYMA";
-    if (desc.includes("JAGUAR")) return "JAGUAR";
-    if (desc.includes("BIOPLAST")) return "BIOPLAST";
-    if (desc.includes("CONVERMEX")) return "CONVERMEX";
-    if (desc.includes("BOLSA")) return "BOLSAS PLASTICAS";
-    if (desc.includes("PLASTI")) return "PLASTIENVASE";
-    if (desc.includes("DESECH")) return "DESECHABLE";
-
-    return "OTROS";
-  }
-
-  function agregarEntrada(codigo, descripcion, linea, cant) {
-    if (!totales[codigo]) {
-      totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
-    }
-    totales[codigo].entradas += cant;
-  }
-
-  function agregarSalida(codigo, descripcion, linea, cant) {
-    if (!totales[codigo]) {
-      totales[codigo] = { descripcion, linea, entradas: 0, salidas: 0 };
-    }
-    totales[codigo].salidas += cant;
-  }
 }
 
+// ----------------------
+// DIBUJAR TABLA
+// ----------------------
+function dibujarTabla() {
+  tabla.innerHTML = "";
 
+  Object.keys(inventario).forEach(id => {
+    const p = inventario[id];
+    const existencia = p.entradas - p.salidas;
 
-// ======================
-// DIBUJAR TABLAS
-// ======================
-const ordenLineas = [
-  "REYMA",
-  "REYMA CHAROLA",
-  "JAGUAR",
-  "BIOPLAST",
-  "CONVERMEX",
-  "BOLSAS PLASTICAS",
-  "PLASTIENVASE",
-  "DESECHABLE",
-  "OTROS"
-];
-
-function dibujarTablas(totales) {
-  const cont = document.getElementById("contenedorTablas");
-  cont.innerHTML = "";
-
-  let grupos = {};
-  Object.keys(totales).forEach(codigo => {
-    const item = totales[codigo];
-    if (!grupos[item.linea]) grupos[item.linea] = [];
-    grupos[item.linea].push({ codigo, ...item });
-  });
-
-  ordenLineas.forEach(linea => {
-    if (!grupos[linea]) return;
-
-    let tabla = `
-      <table>
-        <tr><td class="lineaTitulo" colspan="4">${linea}</td></tr>
-        <tr>
-          <th>Código</th>
-          <th>Descripción</th>
-          <th>Stock</th>
-          <th>Editar</th>
-        </tr>
-    `;
-
-    grupos[linea].forEach(p => {
-      const stock = p.entradas - p.salidas;
-
-      tabla += `
+    tabla.innerHTML += `
       <tr>
-        <td>${p.codigo}</td>
+        <td>${id}</td>
         <td>${p.descripcion}</td>
-        <td><b>${stock}</b></td>
-        <td><input type="number" class="stock-edit" value="${stock}" data-codigo="${p.codigo}"></td>
-      </tr>`;
-    });
-
-    tabla += "</table>";
-    cont.innerHTML += tabla;
+        <td>${p.entradas}</td>
+        <td>${p.salidas}</td>
+        <td class="${existencia < 0 ? 'negativo':'positivo'}">
+          ${existencia}
+        </td>
+      </tr>
+    `;
   });
 }
 
-
-
-// ======================
-// GUARDAR AJUSTES
-// ======================
-document.getElementById("btnGuardar").addEventListener("click", async () => {
-  const inputs = document.querySelectorAll(".stock-edit");
-
-  for (let input of inputs) {
-    const codigo = input.dataset.codigo;
-    const nuevo = Number(input.value);
-    const p = inventarioGlobal[codigo];
-    const actual = p.entradas - p.salidas;
-
-    const diferencia = nuevo - actual;
-    if (diferencia === 0) continue;
-
-    const tipo = diferencia > 0 ? "entradas" : "salidas";
-    const cantidadAjuste = Math.abs(diferencia);
-
-    const ref = collection(db, "almacenes", "almacen_zapata", tipo);
-
-    await addDoc(ref, {
-      codigo,
-      descripcion: p.descripcion,
-      cantidad: cantidadAjuste,
-      tipoMovimiento: "ajuste_manual",
-      linea: p.linea,
-      fecha: new Date().toISOString(),
-      usuario: "Ajuste Inventario"
-    });
-  }
-
-  alert("Ajustes guardados");
-  cargarInventario();
-});
-
-// Ejecutar
-cargarInventario();
+// ----------------------
+// ESCUCHAR DATOS EN VIVO
+// ----------------------
+procesarDatos(collection(db, "almacenes/almacen_zapata/entradas"), "entrada");
+procesarDatos(collection(db, "almacenes/almacen_zapata/salidas"), "salida");
 
 </script>
 
