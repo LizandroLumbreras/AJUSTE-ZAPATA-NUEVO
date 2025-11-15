@@ -53,7 +53,7 @@
      <th>Diferencia</th>
    </tr>
 </thead>
- <tbody id="tablaInventario"></tbody>
+<tbody id="tablaInventario"></tbody>
 </table>
 
 <script type="module">
@@ -65,6 +65,7 @@ import {
   doc,
   setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
 
 // ----------------------
 // CONFIGURACIÓN FIREBASE
@@ -83,9 +84,10 @@ const db = getFirestore(app);
 
 const tabla = document.getElementById("tablaInventario");
 
-// OBJETO GLOBAL DEL INVENTARIO
+// OBJETOS GLOBALES
 let inventario = {};
- let inventarioRealLocal = {};
+let inventarioRealLocal = {};
+
 
 // ----------------------
 // UNIFICADOR DE CÓDIGOS
@@ -97,8 +99,27 @@ function obtenerIdentificador(data) {
   return "SIN-CODIGO";
 }
 
+
 // ----------------------
-// FUNCIÓN QUE PROCESA ENTRADAS/SALIDAS
+// CARGAR INVENTARIO REAL
+// ----------------------
+function cargarInventarioReal() {
+  onSnapshot(collection(db, "almacenes/almacen_zapata/inventario_real"), snap => {
+
+    inventarioRealLocal = {};
+
+    snap.forEach(doc => {
+      const data = doc.data();
+      inventarioRealLocal[data.codigo] = data.inventarioReal;
+    });
+
+    dibujarTabla();
+  });
+}
+
+
+// ----------------------
+// PROCESAR ENTRADAS/SALIDAS
 // ----------------------
 function procesarDatos(coleccion, tipo) {
   onSnapshot(coleccion, (snap) => {
@@ -106,10 +127,9 @@ function procesarDatos(coleccion, tipo) {
 
       const data = doc.data();
 
-      // 1. SI TIENE ARRAY DE PRODUCTOS
       if (Array.isArray(data.productos)) {
+        // ENTRADA CON ARRAY DE PRODUCTOS
         data.productos.forEach(item => {
-          
           const id = obtenerIdentificador(item);
 
           if (!inventario[id]) {
@@ -121,14 +141,12 @@ function procesarDatos(coleccion, tipo) {
           }
 
           const qty = Number(item.cantidad) || 0;
-
           if (tipo === "entrada") inventario[id].entradas += qty;
-          if (tipo === "salida")  inventario[id].salidas  += qty;
 
         });
 
       } else {
-        // 2. SI ES UNA SALIDA NORMAL (DOCUMENTO SUELTO)
+        // SALIDAS NORMALES
         const id = obtenerIdentificador(data);
 
         if (!inventario[id]) {
@@ -140,10 +158,9 @@ function procesarDatos(coleccion, tipo) {
         }
 
         const qty = Number(data.cantidad) || 0;
-
-        if (tipo === "entrada") inventario[id].entradas += qty;
-        if (tipo === "salida")  inventario[id].salidas  += qty;
+        if (tipo === "salida") inventario[id].salidas += qty;
       }
+
     });
 
     dibujarTabla();
@@ -152,9 +169,10 @@ function procesarDatos(coleccion, tipo) {
 
 
 // ----------------------
-// DIBUJAR TABLA
+// TABLA FINAL
 // ----------------------
 function dibujarTabla() {
+
   tabla.innerHTML = "";
 
   Object.keys(inventario).forEach(id => {
@@ -162,10 +180,7 @@ function dibujarTabla() {
     const p = inventario[id];
     const existencia = p.entradas - p.salidas;
 
-    // Obtener el inventario real (si existe)
     const real = inventarioRealLocal[id] ?? "";
-
-    // Calcular diferencia
     const diferencia = real === "" ? "" : Number(real) - existencia;
 
     tabla.innerHTML += `
@@ -176,14 +191,9 @@ function dibujarTabla() {
         <td>${p.salidas}</td>
         <td class="${existencia < 0 ? 'negativo':'positivo'}">${existencia}</td>
 
-        <!-- CAMPO EDITABLE -->
-        <td>
-          <input 
-            type="number" 
-            value="${real}" 
+        <td><input type="number" value="${real}" 
             style="width:90px; padding:4px;" 
-            oninput="actualizarReal('${id}', '${p.descripcion}', this.value)"
-          >
+            oninput="actualizarReal('${id}','${p.descripcion}', this.value)">
         </td>
 
         <td>${diferencia}</td>
@@ -191,16 +201,23 @@ function dibujarTabla() {
     `;
   });
 }
- window.actualizarReal = function(codigo, descripcion, valor) {
+
+
+// ----------------------
+// GUARDAR INVENTARIO REAL
+// ----------------------
+window.actualizarReal = function(codigo, descripcion, valor) {
+
   inventarioRealLocal[codigo] = valor;
 
-  // Guardar inmediatamente en Firestore
   guardarInventarioReal(codigo, descripcion, valor);
 
-  // Refrescar diferencias
   dibujarTabla();
 };
+
+
 async function guardarInventarioReal(codigo, descripcion, valor) {
+
   try {
     await setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
       codigo,
@@ -213,9 +230,11 @@ async function guardarInventarioReal(codigo, descripcion, valor) {
   }
 }
 
+
 // ----------------------
-// ESCUCHAR DATOS EN VIVO
+// EJECUTAR
 // ----------------------
+cargarInventarioReal();
 procesarDatos(collection(db, "almacenes/almacen_zapata/entradas"), "entrada");
 procesarDatos(collection(db, "almacenes/almacen_zapata/salidas"), "salida");
 
