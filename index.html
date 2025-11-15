@@ -88,7 +88,8 @@ function obtenerIdentificador(data) {
   if (data.codigo && data.codigo !== "") return data.codigo;
 
   if (data.productoID && data.productoID !== "") return data.productoID;
-
+  
+  if (data.codigoBarra && data.codigoBarra !== "") return data.codigoBarra;
   return "SIN-CODIGO"; // fallback
 }
 
