@@ -82,15 +82,10 @@ let inventario = {};
 // UNIFICADOR DE CÓDIGOS
 // ----------------------
 function obtenerIdentificador(data) {
-  // ENTRADAS: puede venir "codigo" o "productoID"
-  // SALIDAS: solo viene "codigo"
-
   if (data.codigo && data.codigo !== "") return data.codigo;
-
   if (data.productoID && data.productoID !== "") return data.productoID;
-  
   if (data.codigoBarra && data.codigoBarra !== "") return data.codigoBarra;
-  return "SIN-CODIGO"; // fallback
+  return "SIN-CODIGO";
 }
 
 // ----------------------
@@ -98,29 +93,54 @@ function obtenerIdentificador(data) {
 // ----------------------
 function procesarDatos(coleccion, tipo) {
   onSnapshot(coleccion, (snap) => {
-    snap.docChanges().forEach(change => {
+    snap.forEach(doc => {
 
-      const data = change.doc.data();
+      const data = doc.data();
 
-      const id = obtenerIdentificador(data);  // UNIFICAMOS AQUÍ
+      // 1. SI TIENE ARRAY DE PRODUCTOS
+      if (Array.isArray(data.productos)) {
+        data.productos.forEach(item => {
+          
+          const id = obtenerIdentificador(item);
 
-      if (!inventario[id]) {
-        inventario[id] = {
-          descripcion: data.descripcion || "-",
-          entradas: 0,
-          salidas: 0
-        };
+          if (!inventario[id]) {
+            inventario[id] = {
+              descripcion: item.descripcion || "-",
+              entradas: 0,
+              salidas: 0
+            };
+          }
+
+          const qty = Number(item.cantidad) || 0;
+
+          if (tipo === "entrada") inventario[id].entradas += qty;
+          if (tipo === "salida")  inventario[id].salidas  += qty;
+
+        });
+
+      } else {
+        // 2. SI ES UNA SALIDA NORMAL (DOCUMENTO SUELTO)
+        const id = obtenerIdentificador(data);
+
+        if (!inventario[id]) {
+          inventario[id] = {
+            descripcion: data.descripcion || "-",
+            entradas: 0,
+            salidas: 0
+          };
+        }
+
+        const qty = Number(data.cantidad) || 0;
+
+        if (tipo === "entrada") inventario[id].entradas += qty;
+        if (tipo === "salida")  inventario[id].salidas  += qty;
       }
-
-      const qty = Number(data.cantidad) || 0;
-
-      if (tipo === "entrada") inventario[id].entradas += qty;
-      if (tipo === "salida")  inventario[id].salidas  += qty;
     });
 
     dibujarTabla();
   });
 }
+
 
 // ----------------------
 // DIBUJAR TABLA
