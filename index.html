@@ -40,10 +40,12 @@
 <body>
 
 <h2>Inventario Total – Almacén Zapata</h2>
+
 <button onclick="aplicarAjuste()" 
         style="padding:10px 20px; background:#00416A; color:white; border:none; border-radius:6px; font-size:16px; cursor:pointer;">
   Aplicar Ajuste Final
 </button>
+
 <table>
 <thead>
    <tr>
@@ -60,6 +62,7 @@
 </table>
 
 <script type="module">
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
   getFirestore, 
@@ -70,10 +73,9 @@ import {
   addDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-
-// ----------------------
-// CONFIGURACIÓN FIREBASE
-// ----------------------
+// ------------------------------------------------------
+// FIREBASE
+// ------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
   authDomain: "inventariopv-643f1.firebaseapp.com",
@@ -92,21 +94,19 @@ const tabla = document.getElementById("tablaInventario");
 let inventario = {};
 let inventarioRealLocal = {};
 
-
-// ----------------------
-// UNIFICADOR DE CÓDIGOS
-// ----------------------
+// ------------------------------------------------------
+// UNIFICADOR
+// ------------------------------------------------------
 function obtenerIdentificador(data) {
-  if (data.codigo && data.codigo !== "") return data.codigo;
-  if (data.productoID && data.productoID !== "") return data.productoID;
-  if (data.codigoBarra && data.codigoBarra !== "") return data.codigoBarra;
+  if (data.codigo) return data.codigo;
+  if (data.productoID) return data.productoID;
+  if (data.codigoBarra) return data.codigoBarra;
   return "SIN-CODIGO";
 }
 
-
-// ----------------------
-// CARGAR INVENTARIO REAL
-// ----------------------
+// ------------------------------------------------------
+// INVENTARIO REAL
+// ------------------------------------------------------
 function cargarInventarioReal() {
   onSnapshot(collection(db, "almacenes/almacen_zapata/inventario_real"), snap => {
 
@@ -121,54 +121,35 @@ function cargarInventarioReal() {
   });
 }
 
-
-// ----------------------
-// PROCESAR ENTRADAS/SALIDAS
-// ----------------------
+// ------------------------------------------------------
+// ENTRADAS / SALIDAS
+// ------------------------------------------------------
 function procesarDatos(coleccion, tipo) {
+
   onSnapshot(coleccion, (snap) => {
 
     snap.forEach(doc => {
       const data = doc.data();
 
-      // -----------------------
-      // 1) MOVIMIENTOS CON ARRAY
-      // -----------------------
       if (Array.isArray(data.productos)) {
-
         data.productos.forEach(item => {
-
           const id = obtenerIdentificador(item);
 
           if (!inventario[id]) {
-            inventario[id] = {
-              descripcion: item.descripcion || "-",
-              entradas: 0,
-              salidas: 0
-            };
+            inventario[id] = { descripcion: item.descripcion || "-", entradas: 0, salidas: 0 };
           }
 
           const qty = Number(item.cantidad) || 0;
-
           if (tipo === "entrada") inventario[id].entradas += qty;
           if (tipo === "salida")  inventario[id].salidas += qty;
-
         });
 
       } else {
 
-        // -----------------------
-        // 2) MOVIMIENTO SIMPLE
-        // -----------------------
-
         const id = obtenerIdentificador(data);
 
         if (!inventario[id]) {
-          inventario[id] = {
-            descripcion: data.descripcion || "-",
-            entradas: 0,
-            salidas: 0
-          };
+          inventario[id] = { descripcion: data.descripcion || "-", entradas: 0, salidas: 0 };
         }
 
         const qty = Number(data.cantidad) || 0;
@@ -178,14 +159,13 @@ function procesarDatos(coleccion, tipo) {
       }
     });
 
-    // Importante: redibujar solo una vez
     dibujarTabla();
   });
 }
 
-// ----------------------
+// ------------------------------------------------------
 // TABLA FINAL
-// ----------------------
+// ------------------------------------------------------
 function dibujarTabla() {
 
   tabla.innerHTML = "";
@@ -204,10 +184,12 @@ function dibujarTabla() {
         <td>${p.descripcion}</td>
         <td>${p.entradas}</td>
         <td>${p.salidas}</td>
+
         <td class="${existencia < 0 ? 'negativo':'positivo'}">${existencia}</td>
 
-        <td><input type="number" value="${real}" 
-            style="width:90px; padding:4px;" 
+        <td>
+          <input type="number" value="${real}" 
+            style="width:80px;" 
             oninput="actualizarReal('${id}','${p.descripcion}', this.value)">
         </td>
 
@@ -217,41 +199,25 @@ function dibujarTabla() {
   });
 }
 
-
-// ----------------------
-// GUARDAR INVENTARIO REAL
-// ----------------------
+// ------------------------------------------------------
+// GUARDAR REAL
+// ------------------------------------------------------
 window.actualizarReal = function(codigo, descripcion, valor) {
 
   inventarioRealLocal[codigo] = valor;
 
-  guardarInventarioReal(codigo, descripcion, valor);
+  setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
+    codigo,
+    descripcion,
+    inventarioReal: Number(valor),
+    fechaActualizacion: new Date().toISOString()
+  });
 
-  dibujarTabla();
 };
 
-
-async function guardarInventarioReal(codigo, descripcion, valor) {
-
-  try {
-    await setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
-      codigo,
-      descripcion,
-      inventarioReal: Number(valor),
-      fechaActualizacion: new Date().toISOString()
-    });
-  } catch (e) {
-    console.error("Error guardando real:", e);
-  }
-}
-
-
-// ----------------------
-// EJECUTAR
-// ----------------------
-cargarInventarioReal();
-procesarDatos(collection(db, "almacenes/almacen_zapata/entradas"), "entrada");
-procesarDatos(collection(db, "almacenes/almacen_zapata/salidas"), "salida");
+// ------------------------------------------------------
+// AJUSTE FINAL (YA NO SE DUPLICA)
+// ------------------------------------------------------
 window.aplicarAjuste = async function() {
 
   const fecha = new Date().toISOString();
@@ -259,44 +225,57 @@ window.aplicarAjuste = async function() {
   for (const codigo in inventario) {
 
     const producto = inventario[codigo];
-    const real = inventarioRealLocal[codigo] ?? null;
+    let real = inventarioRealLocal[codigo];
 
-    if (real === null || real === "") continue;
+    if (real === undefined || real === "") continue;
 
-    const existencia = producto.entradas - producto.salidas;
-    const diferencia = Number(real) - existencia;
+    real = Number(real);
 
-    if (diferencia === 0) continue; // No hay ajuste que hacer
+    const existenciaActual = producto.entradas - producto.salidas;
+    const diferencia = real - existenciaActual;
 
-    // ENTRADA AUTOMÁTICA (real > existencia)
     if (diferencia > 0) {
       await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
         tipo: "AJUSTE_POSITIVO",
         fecha,
-        productos: [
-          {
-            codigo: codigo,
-            descripcion: producto.descripcion,
-            cantidad: diferencia
-          }
-        ]
+        productos: [{ codigo, descripcion: producto.descripcion, cantidad: diferencia }]
       });
     }
 
-    // SALIDA AUTOMÁTICA (real < existencia)
     if (diferencia < 0) {
       await addDoc(collection(db, "almacenes/almacen_zapata/salidas"), {
         tipo: "AJUSTE_NEGATIVO",
         fecha,
-        codigo: codigo,
+        codigo,
         descripcion: producto.descripcion,
         cantidad: Math.abs(diferencia)
       });
     }
+
+    // ESTABLECER LA NUEVA EXISTENCIA = REAL (sin recargar)
+    producto.entradas = real;
+    producto.salidas = 0;
+
+    // BORRAR EL REAL
+    inventarioRealLocal[codigo] = "";
+    await setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
+      codigo,
+      descripcion: producto.descripcion,
+      inventarioReal: "",
+      fechaActualizacion: new Date().toISOString()
+    });
   }
 
-  alert("Ajuste realizado correctamente. Refresca para ver los cambios.");
+  dibujarTabla();
+  alert("Ajuste aplicado correctamente.");
 };
+
+// ------------------------------------------------------
+// INICIO
+// ------------------------------------------------------
+cargarInventarioReal();
+procesarDatos(collection(db, "almacenes/almacen_zapata/entradas"), "entrada");
+procesarDatos(collection(db, "almacenes/almacen_zapata/salidas"), "salida");
 
 </script>
 </body>
