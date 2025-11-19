@@ -86,27 +86,25 @@ const db = getFirestore(app);
 // VARIABLES GLOBALES
 // ------------------------------------------------------
 let inventario = {};
-let descripciones = {}; // cache para no consultar múltiples veces
+let cacheDescripciones = {};
 const tabla = document.getElementById("tablaInventario");
 
 
 // ------------------------------------------------------
-// SOLO OBTENER codigo (de codigoBarra o codigo)
+// OBTENER SOLO codigo (PRIORIDAD: codigoBarra > codigo)
 // ------------------------------------------------------
 function obtenerCodigoEntrada(data) {
 
-  return (
-    data.codigo ||
-    data.codigoBarra ||
-    data.codigobarra ||
-    data.codigo_barras ||
-    ""
-  ).toString().trim();
+  if (data.codigoBarra) return String(data.codigoBarra).trim();
+  if (data.codigobarra) return String(data.codigobarra).trim();
+  if (data.codigo)      return String(data.codigo).trim();
+
+  return "";
 }
 
 
 // ------------------------------------------------------
-// CANTIDAD para entradas y salidas
+// CANTIDAD
 // ------------------------------------------------------
 function obtenerCantidad(data) {
   return Number(data.cantidad || 0);
@@ -118,7 +116,9 @@ function obtenerCantidad(data) {
 // ------------------------------------------------------
 async function obtenerDescripcion(codigo) {
 
-  if (descripciones[codigo]) return descripciones[codigo];
+  if (!codigo) return "-";
+
+  if (cacheDescripciones[codigo]) return cacheDescripciones[codigo];
 
   const ref = doc(db, "productos", codigo);
   const snap = await getDoc(ref);
@@ -127,16 +127,19 @@ async function obtenerDescripcion(codigo) {
 
   if (snap.exists()) {
     const d = snap.data();
-    desc = d.descripcion || d.nombre || "-";
+
+    // Tus productos usan CAMPO "concepto"
+    desc = d.concepto || "-";
   }
 
-  descripciones[codigo] = desc;
+  cacheDescripciones[codigo] = desc;
   return desc;
 }
 
 
+
 // ------------------------------------------------------
-// PROCESAR ENTRADAS (solo codigoBarra/codigo + cantidad)
+// PROCESAR ENTRADAS
 // ------------------------------------------------------
 function procesarEntradas(ref) {
 
@@ -145,7 +148,7 @@ function procesarEntradas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      // ENTRADAS EN ARRAY
+      // Si viene en array de productos
       if (Array.isArray(data.productos)) {
 
         data.productos.forEach(item => {
@@ -163,7 +166,7 @@ function procesarEntradas(ref) {
         return;
       }
 
-      // ENTRADA SIMPLE
+      // Entrada simple
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
 
@@ -179,8 +182,9 @@ function procesarEntradas(ref) {
 }
 
 
+
 // ------------------------------------------------------
-// PROCESAR SALIDAS (solo codigo + cantidad)
+// PROCESAR SALIDAS
 // ------------------------------------------------------
 function procesarSalidas(ref) {
 
@@ -189,7 +193,7 @@ function procesarSalidas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      const codigo = data.codigo || "";
+      const codigo = String(data.codigo || "").trim();
       const cantidad = obtenerCantidad(data);
 
       if (!inventario[codigo]) {
@@ -204,8 +208,9 @@ function procesarSalidas(ref) {
 }
 
 
+
 // ------------------------------------------------------
-// ACTUALIZAR DESCRIPCIONES Y TABLA
+// CARGAR DESCRIPCIONES
 // ------------------------------------------------------
 async function actualizarDescripciones() {
 
@@ -217,8 +222,9 @@ async function actualizarDescripciones() {
 }
 
 
+
 // ------------------------------------------------------
-// TABLA
+// DIBUJAR TABLA
 // ------------------------------------------------------
 function dibujarTabla() {
 
@@ -242,11 +248,12 @@ function dibujarTabla() {
 }
 
 
+
 // ------------------------------------------------------
 // INICIO
 // ------------------------------------------------------
 procesarEntradas(collection(db, "almacenes/almacen_zapata/entradas"));
-procesarSalidas (collection(db, "almacenes/almacen_zapata/salidas"));
+procesarSalidas(collection(db, "almacenes/almacen_zapata/salidas"));
 
 </script>
 </body>
