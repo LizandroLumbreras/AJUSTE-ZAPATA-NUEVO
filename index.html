@@ -119,15 +119,36 @@ function obtenerCantidad(data) {
 // =====================================================
 async function obtenerDescripcion(codigo, dEntrada, dInterno) {
 
+  // 1) Si ya viene la descripción de la entrada → usar esa
   if (dEntrada) return dEntrada;
   if (dInterno) return dInterno;
 
-  if (cacheDescripciones[codigo])
+  // Normalizar: convertir siempre a string
+  codigo = codigo.toString().trim();
+
+  // Evitar cachear un "-" definitivo
+  if (cacheDescripciones[codigo]) {
     return cacheDescripciones[codigo];
+  }
 
-  let desc = "-";
+  let desc = null;
 
-  // 1. Buscar por ID
+  // ============================================================
+  // 1. BUSCAR POR codigoBarra EXACTO
+  // ============================================================
+  let q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
+  let qs1 = await getDocs(q1);
+
+  if (!qs1.empty) {
+    const d = qs1.docs[0].data();
+    desc = d.concepto || d.descripcion || d.nombre || "-";
+    cacheDescripciones[codigo] = desc;
+    return desc;
+  }
+
+  // ============================================================
+  // 2. BUSCAR POR ID EXACTO (el documento se llama igual)
+  // ============================================================
   const ref = doc(db, "productos", codigo);
   const snap = await getDoc(ref);
 
@@ -138,31 +159,40 @@ async function obtenerDescripcion(codigo, dEntrada, dInterno) {
     return desc;
   }
 
-  // 2. Buscar por codigoBarra
-  let q = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
-  let qs = await getDocs(q);
-  qs.forEach(d => {
-    const info = d.data();
-    desc = info.concepto || info.descripcion || info.nombre || "-";
-  });
+  // ============================================================
+  // 3. BUSCAR QUITANDO CEROS A LA IZQUIERDA
+  // ============================================================
+  const codigoSinCeros = codigo.replace(/^0+/, "");
 
-  if (desc !== "-") {
+  if (codigoSinCeros !== codigo) {
+    let q2 = query(collection(db, "productos"), where("codigoBarra", "==", codigoSinCeros));
+    let qs2 = await getDocs(q2);
+
+    if (!qs2.empty) {
+      const d = qs2.docs[0].data();
+      desc = d.concepto || d.descripcion || d.nombre || "-";
+      cacheDescripciones[codigo] = desc;
+      return desc;
+    }
+  }
+
+  // ============================================================
+  // 4. BUSCAR POR ID SIN CEROS (último recurso)
+  // ============================================================
+  const ref2 = doc(db, "productos", codigoSinCeros);
+  const snap2 = await getDoc(ref2);
+
+  if (snap2.exists()) {
+    const d = snap2.data();
+    desc = d.concepto || d.descripcion || d.nombre || "-";
     cacheDescripciones[codigo] = desc;
     return desc;
   }
 
-  // 3. Buscar por codigobarras
-  q = query(collection(db, "productos"), where("codigobarras", "==", codigo));
-  qs = await getDocs(q);
-  qs.forEach(d => {
-    const info = d.data();
-    desc = info.concepto || info.descripcion || info.nombre || "-";
-  });
-
-  cacheDescripciones[codigo] = desc;
-  return desc;
+  // Nada encontrado
+  cacheDescripciones[codigo] = "-";
+  return "-";
 }
-
 
 // =====================================================
 // PROCESAR ENTRADAS
