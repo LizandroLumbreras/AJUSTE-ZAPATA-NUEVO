@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Inventario Total – Almacén Zapata</title>
+<title>Inventario – Almacén Zapata</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -35,16 +35,11 @@
  .positivo{ color:green; font-weight:bold; }
  .negativo{ color:red; font-weight:bold; }
 </style>
-
 </head>
+
 <body>
 
 <h2>Inventario Total – Almacén Zapata</h2>
-
-<button onclick="aplicarAjuste()" 
-        style="padding:10px 20px; background:#00416A; color:white; border:none; border-radius:6px; font-size:16px; cursor:pointer;">
-  Aplicar Ajuste Final
-</button>
 
 <table>
 <thead>
@@ -54,28 +49,26 @@
      <th>Entradas</th>
      <th>Salidas</th>
      <th>Existencia</th>
-     <th>Real</th>
-     <th>Diferencia</th>
    </tr>
 </thead>
 <tbody id="tablaInventario"></tbody>
 </table>
 
+
 <script type="module">
 
+// ------------------------------------------------------
+// FIREBASE
+// ------------------------------------------------------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
   getFirestore, 
   collection, 
   onSnapshot,
   doc,
-  setDoc,
-  addDoc
+  getDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// ------------------------------------------------------
-// FIREBASE
-// ------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
   authDomain: "inventariopv-643f1.firebaseapp.com",
@@ -88,194 +81,172 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+
+// ------------------------------------------------------
+// VARIABLES GLOBALES
+// ------------------------------------------------------
+let inventario = {};
+let descripciones = {}; // cache para no consultar múltiples veces
 const tabla = document.getElementById("tablaInventario");
 
-// OBJETOS GLOBALES
-let inventario = {};
-let inventarioRealLocal = {};
 
 // ------------------------------------------------------
-// UNIFICADOR
+// SOLO OBTENER codigo (de codigoBarra o codigo)
 // ------------------------------------------------------
-function obtenerIdentificador(data) {
-  if (data.codigo) return data.codigo;
-  if (data.productoID) return data.productoID;
-  if (data.codigoBarra) return data.codigoBarra;
-  return "SIN-CODIGO";
+function obtenerCodigoEntrada(data) {
+
+  return (
+    data.codigo ||
+    data.codigoBarra ||
+    data.codigobarra ||
+    data.codigo_barras ||
+    ""
+  ).toString().trim();
 }
 
+
 // ------------------------------------------------------
-// INVENTARIO REAL
+// CANTIDAD para entradas y salidas
 // ------------------------------------------------------
-function cargarInventarioReal() {
-  onSnapshot(collection(db, "almacenes/almacen_zapata/inventario_real"), snap => {
-
-    inventarioRealLocal = {};
-
-    snap.forEach(doc => {
-      const data = doc.data();
-      inventarioRealLocal[data.codigo] = data.inventarioReal;
-    });
-
-    dibujarTabla();
-  });
+function obtenerCantidad(data) {
+  return Number(data.cantidad || 0);
 }
 
+
 // ------------------------------------------------------
-// ENTRADAS / SALIDAS
+// OBTENER DESCRIPCIÓN DESDE productos/{codigo}
 // ------------------------------------------------------
-function procesarDatos(coleccion, tipo) {
+async function obtenerDescripcion(codigo) {
 
-  onSnapshot(coleccion, (snap) => {
+  if (descripciones[codigo]) return descripciones[codigo];
 
-    snap.forEach(doc => {
-      const data = doc.data();
+  const ref = doc(db, "productos", codigo);
+  const snap = await getDoc(ref);
 
+  let desc = "-";
+
+  if (snap.exists()) {
+    const d = snap.data();
+    desc = d.descripcion || d.nombre || "-";
+  }
+
+  descripciones[codigo] = desc;
+  return desc;
+}
+
+
+// ------------------------------------------------------
+// PROCESAR ENTRADAS (solo codigoBarra/codigo + cantidad)
+// ------------------------------------------------------
+function procesarEntradas(ref) {
+
+  onSnapshot(ref, async snap => {
+
+    snap.forEach(docu => {
+      const data = docu.data();
+
+      // ENTRADAS EN ARRAY
       if (Array.isArray(data.productos)) {
-        data.productos.forEach(item => {
-          const id = obtenerIdentificador(item);
 
-          if (!inventario[id]) {
-            inventario[id] = { descripcion: item.descripcion || "-", entradas: 0, salidas: 0 };
+        data.productos.forEach(item => {
+
+          const codigo = obtenerCodigoEntrada(item);
+          const cantidad = obtenerCantidad(item);
+
+          if (!inventario[codigo]) {
+            inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
           }
 
-          const qty = Number(item.cantidad) || 0;
-          if (tipo === "entrada") inventario[id].entradas += qty;
-          if (tipo === "salida")  inventario[id].salidas += qty;
+          inventario[codigo].entradas += cantidad;
         });
 
-      } else {
-
-        const id = obtenerIdentificador(data);
-
-        if (!inventario[id]) {
-          inventario[id] = { descripcion: data.descripcion || "-", entradas: 0, salidas: 0 };
-        }
-
-        const qty = Number(data.cantidad) || 0;
-
-        if (tipo === "entrada") inventario[id].entradas += qty;
-        if (tipo === "salida")  inventario[id].salidas += qty;
+        return;
       }
+
+      // ENTRADA SIMPLE
+      const codigo = obtenerCodigoEntrada(data);
+      const cantidad = obtenerCantidad(data);
+
+      if (!inventario[codigo]) {
+        inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
+      }
+
+      inventario[codigo].entradas += cantidad;
+    });
+
+    actualizarDescripciones();
+  });
+}
+
+
+// ------------------------------------------------------
+// PROCESAR SALIDAS (solo codigo + cantidad)
+// ------------------------------------------------------
+function procesarSalidas(ref) {
+
+  onSnapshot(ref, snap => {
+
+    snap.forEach(docu => {
+      const data = docu.data();
+
+      const codigo = data.codigo || "";
+      const cantidad = obtenerCantidad(data);
+
+      if (!inventario[codigo]) {
+        inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
+      }
+
+      inventario[codigo].salidas += cantidad;
     });
 
     dibujarTabla();
   });
 }
 
+
 // ------------------------------------------------------
-// TABLA FINAL
+// ACTUALIZAR DESCRIPCIONES Y TABLA
+// ------------------------------------------------------
+async function actualizarDescripciones() {
+
+  for (const codigo of Object.keys(inventario)) {
+    inventario[codigo].descripcion = await obtenerDescripcion(codigo);
+  }
+
+  dibujarTabla();
+}
+
+
+// ------------------------------------------------------
+// TABLA
 // ------------------------------------------------------
 function dibujarTabla() {
 
   tabla.innerHTML = "";
 
-  Object.keys(inventario).forEach(id => {
+  Object.keys(inventario).forEach(codigo => {
 
-    const p = inventario[id];
+    const p = inventario[codigo];
     const existencia = p.entradas - p.salidas;
-
-    const real = inventarioRealLocal[id] ?? "";
-    const diferencia = real === "" ? "" : Number(real) - existencia;
 
     tabla.innerHTML += `
       <tr>
-        <td>${id}</td>
+        <td>${codigo}</td>
         <td>${p.descripcion}</td>
         <td>${p.entradas}</td>
         <td>${p.salidas}</td>
-
-        <td class="${existencia < 0 ? 'negativo':'positivo'}">${existencia}</td>
-
-        <td>
-          <input type="number" value="${real}" 
-            style="width:80px;" 
-            oninput="actualizarReal('${id}','${p.descripcion}', this.value)">
-        </td>
-
-        <td>${diferencia}</td>
+        <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
       </tr>
     `;
   });
 }
 
-// ------------------------------------------------------
-// GUARDAR REAL
-// ------------------------------------------------------
-window.actualizarReal = function(codigo, descripcion, valor) {
-
-  inventarioRealLocal[codigo] = valor;
-
-  setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
-    codigo,
-    descripcion,
-    inventarioReal: Number(valor),
-    fechaActualizacion: new Date().toISOString()
-  });
-
-};
-
-// ------------------------------------------------------
-// AJUSTE FINAL (YA NO SE DUPLICA)
-// ------------------------------------------------------
-window.aplicarAjuste = async function() {
-
-  const fecha = new Date().toISOString();
-
-  for (const codigo in inventario) {
-
-    const producto = inventario[codigo];
-    let real = inventarioRealLocal[codigo];
-
-    if (real === undefined || real === "") continue;
-
-    real = Number(real);
-
-    const existenciaActual = producto.entradas - producto.salidas;
-    const diferencia = real - existenciaActual;
-
-    if (diferencia > 0) {
-      await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
-        tipo: "AJUSTE_POSITIVO",
-        fecha,
-        productos: [{ codigo, descripcion: producto.descripcion, cantidad: diferencia }]
-      });
-    }
-
-    if (diferencia < 0) {
-      await addDoc(collection(db, "almacenes/almacen_zapata/salidas"), {
-        tipo: "AJUSTE_NEGATIVO",
-        fecha,
-        codigo,
-        descripcion: producto.descripcion,
-        cantidad: Math.abs(diferencia)
-      });
-    }
-
-    // ESTABLECER LA NUEVA EXISTENCIA = REAL (sin recargar)
-    producto.entradas = real;
-    producto.salidas = 0;
-
-    // BORRAR EL REAL
-    inventarioRealLocal[codigo] = "";
-    await setDoc(doc(db, "almacenes/almacen_zapata/inventario_real", codigo), {
-      codigo,
-      descripcion: producto.descripcion,
-      inventarioReal: "",
-      fechaActualizacion: new Date().toISOString()
-    });
-  }
-
-  dibujarTabla();
-  alert("Ajuste aplicado correctamente.");
-};
 
 // ------------------------------------------------------
 // INICIO
 // ------------------------------------------------------
-cargarInventarioReal();
-procesarDatos(collection(db, "almacenes/almacen_zapata/entradas"), "entrada");
-procesarDatos(collection(db, "almacenes/almacen_zapata/salidas"), "salida");
+procesarEntradas(collection(db, "almacenes/almacen_zapata/entradas"));
+procesarSalidas (collection(db, "almacenes/almacen_zapata/salidas"));
 
 </script>
 </body>
