@@ -57,19 +57,10 @@
 
 <script type="module">
 
-// ------------------------------------------------------
-// FIREBASE
-// ------------------------------------------------------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
-  getFirestore, 
-  collection, 
-  onSnapshot,
-  doc,
-  getDoc,
-  query,
-  where,
-  getDocs
+  getFirestore, collection, onSnapshot, doc, getDoc,
+  query, where, getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -85,70 +76,87 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 
-// ------------------------------------------------------
-// VARIABLES GLOBALES
-// ------------------------------------------------------
+// =====================================================
+// VARIABLES
+// =====================================================
 let inventario = {};
 let cacheDescripciones = {};
 const tabla = document.getElementById("tablaInventario");
 
 
-// ------------------------------------------------------
-// OBTENER CODIGO (codigoBarra > codigo)
-// ------------------------------------------------------
+// =====================================================
+// DETECTAR CÓDIGO (TODAS LAS VARIANTES)
+// =====================================================
 function obtenerCodigoEntrada(data) {
-  if (data.codigoBarra) return String(data.codigoBarra).trim();
-  if (data.codigobarra) return String(data.codigobarra).trim();
-  if (data.codigo)      return String(data.codigo).trim();
-  return "";
+
+  return (
+    data.codigoBarra ||
+    data.codigobarra ||
+    data.codigoBarras ||
+    data.codigo_barras ||
+    data.codigo ||
+    data.productoId ||
+    data.productoID ||
+    data.productoid ||
+    ""
+  ).toString().trim();
 }
 
-// ------------------------------------------------------
-// OBTENER CANTIDAD
-// ------------------------------------------------------
+// =====================================================
+// DETECTAR CANTIDAD
+// =====================================================
 function obtenerCantidad(data) {
   return Number(data.cantidad || 0);
 }
 
 
-// ------------------------------------------------------
-// OBTENER DESCRIPCIÓN
+// =====================================================
+// OBTENER DESCRIPCIÓN (TODAS LAS VARIANTES)
 // PRIORIDAD:
-// 1) descripcion (entrada)
-// 2) productoInterno (entrada)
-// 3) productos/{codigo}.concepto
-// ------------------------------------------------------
-async function obtenerDescripcion(codigo, descripcionEntrada, productoInterno) {
+// 1) descripción de entrada
+// 2) productoInterno
+// 3) producto en Firestore (ID / codigoBarra / codigobarras)
+// =====================================================
+async function obtenerDescripcion(codigo, dEntrada, dInterno) {
 
-  if (descripcionEntrada) return descripcionEntrada;
-  if (productoInterno) return productoInterno;
+  if (dEntrada) return dEntrada;
+  if (dInterno) return dInterno;
 
-  if (cacheDescripciones[codigo]) return cacheDescripciones[codigo];
+  if (cacheDescripciones[codigo])
+    return cacheDescripciones[codigo];
 
   let desc = "-";
 
-  // 1️⃣ Buscar por documento ID
+  // 1. Buscar por ID
   const ref = doc(db, "productos", codigo);
   const snap = await getDoc(ref);
 
   if (snap.exists()) {
     const d = snap.data();
-    desc = d.concepto || "-";
+    desc = d.concepto || d.descripcion || d.nombre || "-";
     cacheDescripciones[codigo] = desc;
     return desc;
   }
 
-  // 2️⃣ Intentar buscar por campo codigoBarra
-  const q = query(
-    collection(db, "productos"),
-    where("codigoBarra", "==", codigo)
-  );
+  // 2. Buscar por codigoBarra
+  let q = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
+  let qs = await getDocs(q);
+  qs.forEach(d => {
+    const info = d.data();
+    desc = info.concepto || info.descripcion || info.nombre || "-";
+  });
 
-  const querySnap = await getDocs(q);
+  if (desc !== "-") {
+    cacheDescripciones[codigo] = desc;
+    return desc;
+  }
 
-  querySnap.forEach(docu => {
-    const d = docu.data();
-    desc = d.concepto || "-";
+  // 3. Buscar por codigobarras
+  q = query(collection(db, "productos"), where("codigobarras", "==", codigo));
+  qs = await getDocs(q);
+  qs.forEach(d => {
+    const info = d.data();
+    desc = info.concepto || info.descripcion || info.nombre || "-";
   });
 
   cacheDescripciones[codigo] = desc;
@@ -156,10 +164,9 @@ async function obtenerDescripcion(codigo, descripcionEntrada, productoInterno) {
 }
 
 
-
-// ------------------------------------------------------
+// =====================================================
 // PROCESAR ENTRADAS
-// ------------------------------------------------------
+// =====================================================
 function procesarEntradas(ref) {
 
   onSnapshot(ref, async snap => {
@@ -167,15 +174,28 @@ function procesarEntradas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      // ENTRADAS CON ARREGLO productos[]
+      // ARRAY productos[]
       if (Array.isArray(data.productos)) {
-
         data.productos.forEach(item => {
 
           const codigo = obtenerCodigoEntrada(item);
           const cantidad = obtenerCantidad(item);
-          const descripcion = item.descripcion || "";
-          const productoInterno = item.productoInterno || "";
+
+          // TODAS las variantes de descripción
+          const descripcion =
+            item.descripcion ||
+            item.descripcion_producto ||
+            item.descripcionEntrada ||
+            item.desc ||
+            item.nombre ||
+            "";
+
+          const productoInterno =
+            item.productoInterno ||
+            item.productointerno ||
+            item.producto_interno ||
+            item.producto ||
+            "";
 
           if (!inventario[codigo]) {
             inventario[codigo] = {
@@ -187,7 +207,6 @@ function procesarEntradas(ref) {
             };
           }
 
-          inventario[codigo].descripcion = descripcion || productoInterno || inventario[codigo].descripcion;
           inventario[codigo].descEntrada = descripcion;
           inventario[codigo].descInterna = productoInterno;
 
@@ -200,8 +219,21 @@ function procesarEntradas(ref) {
       // ENTRADA SIMPLE
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
-      const descripcion = data.descripcion || "";
-      const productoInterno = data.productoInterno || "";
+
+      const descripcion =
+        data.descripcion ||
+        data.descripcion_producto ||
+        data.descripcionEntrada ||
+        data.desc ||
+        data.nombre ||
+        "";
+
+      const productoInterno =
+        data.productoInterno ||
+        data.productointerno ||
+        data.producto_interno ||
+        data.producto ||
+        "";
 
       if (!inventario[codigo]) {
         inventario[codigo] = {
@@ -213,10 +245,8 @@ function procesarEntradas(ref) {
         };
       }
 
-      inventario[codigo].descripcion = descripcion || productoInterno || inventario[codigo].descripcion;
       inventario[codigo].descEntrada = descripcion;
       inventario[codigo].descInterna = productoInterno;
-
       inventario[codigo].entradas += cantidad;
     });
 
@@ -225,10 +255,9 @@ function procesarEntradas(ref) {
 }
 
 
-
-// ------------------------------------------------------
+// =====================================================
 // PROCESAR SALIDAS
-// ------------------------------------------------------
+// =====================================================
 function procesarSalidas(ref) {
 
   onSnapshot(ref, snap => {
@@ -236,7 +265,7 @@ function procesarSalidas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      const codigo = String(data.codigo || "").trim();
+      const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
 
       if (!inventario[codigo]) {
@@ -257,29 +286,27 @@ function procesarSalidas(ref) {
 }
 
 
-
-// ------------------------------------------------------
-// ACTUALIZAR DESCRIPCIONES
-// ------------------------------------------------------
+// =====================================================
+// Cargar descripciones finales
+// =====================================================
 async function actualizarDescripciones() {
 
   for (const codigo of Object.keys(inventario)) {
-
-    inventario[codigo].descripcion = await obtenerDescripcion(
-      codigo,
-      inventario[codigo].descEntrada,
-      inventario[codigo].descInterna
-    );
+    inventario[codigo].descripcion =
+      await obtenerDescripcion(
+        codigo,
+        inventario[codigo].descEntrada,
+        inventario[codigo].descInterna
+      );
   }
 
   dibujarTabla();
 }
 
 
-
-// ------------------------------------------------------
-// DIBUJAR TABLA
-// ------------------------------------------------------
+// =====================================================
+// TABLA
+// =====================================================
 function dibujarTabla() {
 
   tabla.innerHTML = "";
@@ -302,10 +329,9 @@ function dibujarTabla() {
 }
 
 
-
-// ------------------------------------------------------
+// =====================================================
 // INICIO
-// ------------------------------------------------------
+// =====================================================
 procesarEntradas(collection(db, "almacenes/almacen_zapata/entradas"));
 procesarSalidas(collection(db, "almacenes/almacen_zapata/salidas"));
 
