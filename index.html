@@ -94,20 +94,17 @@ const tabla = document.getElementById("tablaInventario");
 
 
 // ------------------------------------------------------
-// OBTENER SOLO codigo (PRIORIDAD: codigoBarra > codigo)
+// OBTENER CODIGO (codigoBarra > codigo)
 // ------------------------------------------------------
 function obtenerCodigoEntrada(data) {
-
   if (data.codigoBarra) return String(data.codigoBarra).trim();
   if (data.codigobarra) return String(data.codigobarra).trim();
   if (data.codigo)      return String(data.codigo).trim();
-
   return "";
 }
 
-
 // ------------------------------------------------------
-// CANTIDAD
+// OBTENER CANTIDAD
 // ------------------------------------------------------
 function obtenerCantidad(data) {
   return Number(data.cantidad || 0);
@@ -115,13 +112,17 @@ function obtenerCantidad(data) {
 
 
 // ------------------------------------------------------
-// OBTENER DESCRIPCIÓN DESDE productos
-// 1) Busca por ID
-// 2) Si no existe, busca por codigoBarra
+// OBTENER DESCRIPCIÓN
+// PRIORIDAD:
+// 1) descripcion (entrada)
+// 2) productoInterno (entrada)
+// 3) productos/{codigo}.concepto
 // ------------------------------------------------------
-async function obtenerDescripcion(codigo) {
+async function obtenerDescripcion(codigo, descripcionEntrada, productoInterno) {
 
-  if (!codigo) return "-";
+  if (descripcionEntrada) return descripcionEntrada;
+  if (productoInterno) return productoInterno;
+
   if (cacheDescripciones[codigo]) return cacheDescripciones[codigo];
 
   let desc = "-";
@@ -137,7 +138,7 @@ async function obtenerDescripcion(codigo) {
     return desc;
   }
 
-  // 2️⃣ Si no existe ID, buscar por campo codigoBarra (soluciona equivalencias)
+  // 2️⃣ Intentar buscar por campo codigoBarra
   const q = query(
     collection(db, "productos"),
     where("codigoBarra", "==", codigo)
@@ -166,17 +167,29 @@ function procesarEntradas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      // Entradas con arreglo productos[]
+      // ENTRADAS CON ARREGLO productos[]
       if (Array.isArray(data.productos)) {
 
         data.productos.forEach(item => {
 
           const codigo = obtenerCodigoEntrada(item);
           const cantidad = obtenerCantidad(item);
+          const descripcion = item.descripcion || "";
+          const productoInterno = item.productoInterno || "";
 
           if (!inventario[codigo]) {
-            inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
+            inventario[codigo] = {
+              descripcion: "-",
+              entradas: 0,
+              salidas: 0,
+              descEntrada: descripcion,
+              descInterna: productoInterno
+            };
           }
+
+          inventario[codigo].descripcion = descripcion || productoInterno || inventario[codigo].descripcion;
+          inventario[codigo].descEntrada = descripcion;
+          inventario[codigo].descInterna = productoInterno;
 
           inventario[codigo].entradas += cantidad;
         });
@@ -184,13 +197,25 @@ function procesarEntradas(ref) {
         return;
       }
 
-      // Entrada simple
+      // ENTRADA SIMPLE
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
+      const descripcion = data.descripcion || "";
+      const productoInterno = data.productoInterno || "";
 
       if (!inventario[codigo]) {
-        inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
+        inventario[codigo] = {
+          descripcion: "-",
+          entradas: 0,
+          salidas: 0,
+          descEntrada: descripcion,
+          descInterna: productoInterno
+        };
       }
+
+      inventario[codigo].descripcion = descripcion || productoInterno || inventario[codigo].descripcion;
+      inventario[codigo].descEntrada = descripcion;
+      inventario[codigo].descInterna = productoInterno;
 
       inventario[codigo].entradas += cantidad;
     });
@@ -215,7 +240,13 @@ function procesarSalidas(ref) {
       const cantidad = obtenerCantidad(data);
 
       if (!inventario[codigo]) {
-        inventario[codigo] = { descripcion: "-", entradas: 0, salidas: 0 };
+        inventario[codigo] = {
+          descripcion: "-",
+          entradas: 0,
+          salidas: 0,
+          descEntrada: "",
+          descInterna: ""
+        };
       }
 
       inventario[codigo].salidas += cantidad;
@@ -228,12 +259,17 @@ function procesarSalidas(ref) {
 
 
 // ------------------------------------------------------
-// CARGAR DESCRIPCIONES
+// ACTUALIZAR DESCRIPCIONES
 // ------------------------------------------------------
 async function actualizarDescripciones() {
 
   for (const codigo of Object.keys(inventario)) {
-    inventario[codigo].descripcion = await obtenerDescripcion(codigo);
+
+    inventario[codigo].descripcion = await obtenerDescripcion(
+      codigo,
+      inventario[codigo].descEntrada,
+      inventario[codigo].descInterna
+    );
   }
 
   dibujarTabla();
