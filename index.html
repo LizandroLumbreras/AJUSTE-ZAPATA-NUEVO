@@ -277,6 +277,36 @@ function procesarSalidas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
+      // 🔥 1. Si trae ARRAY articulos[], procesarlo
+      if (Array.isArray(data.articulos)) {
+        data.articulos.forEach(item => {
+
+          const codigo = obtenerCodigoEntrada(item);
+          const cantidad = obtenerCantidad(item);
+
+          const descripcion =
+            item.descripcion ||
+            item.nombre ||
+            "";
+
+          if (!inventario[codigo]) {
+            inventario[codigo] = {
+              descripcion: "-",
+              entradas: 0,
+              salidas: 0,
+              descEntrada: "",
+              descInterna: ""
+            };
+          }
+
+          inventario[codigo].salidas += cantidad;
+          inventario[codigo].descEntrada = descripcion;
+        });
+
+        return;
+      }
+
+      // 🔥 2. Salida simple
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
 
@@ -291,6 +321,7 @@ function procesarSalidas(ref) {
       }
 
       inventario[codigo].salidas += cantidad;
+
     });
 
     dibujarTabla();
@@ -304,12 +335,11 @@ function procesarSalidas(ref) {
 async function actualizarDescripciones() {
 
   for (const codigo of Object.keys(inventario)) {
-    inventario[codigo].descripcion =
-      await obtenerDescripcion(
-        codigo,
-        inventario[codigo].descEntrada,
-        inventario[codigo].descInterna
-      );
+inventario[codigo].descripcion =
+ inventario[codigo].descEntrada ||
+ inventario[codigo].descInterna ||
+ await obtenerDescripcion(codigo);
+
   }
 
   dibujarTabla();
