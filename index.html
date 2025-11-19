@@ -82,134 +82,41 @@ const db = getFirestore(app);
 let inventario = {};
 let cacheDescripciones = {};
 const tabla = document.getElementById("tablaInventario");
-
-
-// =====================================================
-// DETECTAR CÓDIGO (TODAS LAS VARIANTES)
-// =====================================================
-function obtenerCodigoEntrada(data) {
-
-  return (
-    data.codigoBarra ||
-    data.codigobarra ||
-    data.codigoBarras ||
-    data.codigo_barras ||
-    data.codigo ||
-    data.productoId ||
-    data.productoID ||
-    data.productoid ||
-    ""
-  ).toString().trim();
-}
+let entradasCargadas = false;
+let salidasCargadas = false;
 
 // =====================================================
-// DETECTAR CANTIDAD
+// ACTUALIZAR DESCRIPCIÓN CON PRIORIDAD DE SALIDAS
 // =====================================================
-function obtenerCantidad(data) {
-  return Number(data.cantidad || 0);
-}
-
-
-// =====================================================
-// OBTENER DESCRIPCIÓN (TODAS LAS VARIANTES)
-// PRIORIDAD:
-// 1) descripción de entrada
-// 2) productoInterno
-// 3) producto en Firestore (ID / codigoBarra / codigobarras)
-// =====================================================
-function normalizarCodigo(codigo) {
-  codigo = codigo.toString().trim();
-  if (codigo.length === 12) return codigo;
-  return codigo.padStart(12, "0");
-}
-
-
-async function obtenerDescripcion(codigo, dEntrada, dInterno) {
-
-  if (dEntrada) return dEntrada;
-  if (dInterno) return dInterno;
-
-  codigo = normalizarCodigo(codigo);
-
-  if (cacheDescripciones[codigo]) {
-    return cacheDescripciones[codigo];
+async function actualizarDescripcionProducto(codigo) {
+  const producto = inventario[codigo];
+  
+  // PRIORIDAD: 1) Descripción de salida, 2) Descripción de entrada, 3) Buscar en Firestore
+  let descripcionFinal = producto.descSalida || producto.descEntrada || producto.descInterna;
+  
+  if (!descripcionFinal || descripcionFinal === "-") {
+    descripcionFinal = await obtenerDescripcion(codigo);
   }
-
-  let desc = null;
-
-  // 1. Buscar por codigoBarra EXACTO
-  let q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
-  let qs1 = await getDocs(q1);
-
-  if (!qs1.empty) {
-    const d = qs1.docs[0].data();
-    desc = d.concepto || d.descripcion || d.nombre || "-";
-    cacheDescripciones[codigo] = desc;
-    return desc;
-  }
-
-  // 2. Buscar por ID EXACTO
-// 2. Buscar por ID EXACTO
-const ref = doc(db, "productos", codigo);
-const snap = await getDoc(ref);
-
-if (snap.exists()) {
-  const d = snap.data();
-  desc = d.concepto || d.descripcion || d.nombre || "-";
-  cacheDescripciones[codigo] = desc;
-  return desc;
-}
-
-// 3. Buscar por ID sin ceros
-const codigoSinCeros = codigo.replace(/^0+/, "");
-const ref2 = doc(db, "productos", codigoSinCeros);
-const snap2 = await getDoc(ref2);
-
-if (snap2.exists()) {
-  const d = snap2.data();
-  desc = d.concepto || d.descripcion || d.nombre || "-";
-  cacheDescripciones[codigo] = desc;
-  return desc;
-}
-
-
-  // Nada encontrado
-  cacheDescripciones[codigo] = "-";
-  return "-";
+  
+  inventario[codigo].descripcion = descripcionFinal;
 }
 
 // =====================================================
-// PROCESAR ENTRADAS
+// PROCESAR ENTRADAS (CORREGIDO)
 // =====================================================
 function procesarEntradas(ref) {
-
   onSnapshot(ref, async snap => {
-
     snap.forEach(docu => {
       const data = docu.data();
+      const timestamp = data.fecha?.toDate?.() || new Date();
 
       // ARRAY productos[]
       if (Array.isArray(data.productos)) {
         data.productos.forEach(item => {
-
           const codigo = obtenerCodigoEntrada(item);
           const cantidad = obtenerCantidad(item);
-
-          // TODAS las variantes de descripción
-          const descripcion =
-            item.descripcion ||
-            item.descripcion_producto ||
-            item.descripcionEntrada ||
-            item.desc ||
-            item.nombre ||
-            "";
-
-          const productoInterno =
-            item.productoInterno ||
-            item.productointerno ||
-            item.producto_interno ||
-            item.producto ||
-            "";
+          const descripcion = item.descripcion || item.descripcion_producto || item.descripcionEntrada || item.desc || item.nombre || "";
+          const productoInterno = item.productoInterno || item.productointerno || item.producto_interno || item.producto || "";
 
           if (!inventario[codigo]) {
             inventario[codigo] = {
@@ -217,37 +124,25 @@ function procesarEntradas(ref) {
               entradas: 0,
               salidas: 0,
               descEntrada: descripcion,
-              descInterna: productoInterno
+              descInterna: productoInterno,
+              descSalida: "",
+              ultimaActualizacion: timestamp
             };
           }
 
+          inventario[codigo].entradas += cantidad;
           inventario[codigo].descEntrada = descripcion;
           inventario[codigo].descInterna = productoInterno;
-
-          inventario[codigo].entradas += cantidad;
+          inventario[codigo].ultimaActualizacion = timestamp;
         });
-
         return;
       }
 
       // ENTRADA SIMPLE
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
-
-      const descripcion =
-        data.descripcion ||
-        data.descripcion_producto ||
-        data.descripcionEntrada ||
-        data.desc ||
-        data.nombre ||
-        "";
-
-      const productoInterno =
-        data.productoInterno ||
-        data.productointerno ||
-        data.producto_interno ||
-        data.producto ||
-        "";
+      const descripcion = data.descripcion || data.descripcion_producto || data.descripcionEntrada || data.desc || data.nombre || "";
+      const productoInterno = data.productoInterno || data.productointerno || data.producto_interno || data.producto || "";
 
       if (!inventario[codigo]) {
         inventario[codigo] = {
@@ -255,41 +150,40 @@ function procesarEntradas(ref) {
           entradas: 0,
           salidas: 0,
           descEntrada: descripcion,
-          descInterna: productoInterno
+          descInterna: productoInterno,
+          descSalida: "",
+          ultimaActualizacion: timestamp
         };
       }
 
+      inventario[codigo].entradas += cantidad;
       inventario[codigo].descEntrada = descripcion;
       inventario[codigo].descInterna = productoInterno;
-      inventario[codigo].entradas += cantidad;
+      inventario[codigo].ultimaActualizacion = timestamp;
     });
 
-    actualizarDescripciones();
+    entradasCargadas = true;
+    if (entradasCargadas && salidasCargadas) {
+      await actualizarTodasDescripciones();
+    }
   });
 }
 
-
 // =====================================================
-// PROCESAR SALIDAS
+// PROCESAR SALIDAS (CORREGIDO)
 // =====================================================
 function procesarSalidas(ref) {
-
-  onSnapshot(ref, snap => {
-
+  onSnapshot(ref, async snap => {
     snap.forEach(docu => {
       const data = docu.data();
+      const timestamp = data.fecha?.toDate?.() || new Date();
 
       // 🔥 1. Si trae ARRAY articulos[], procesarlo
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
-
           const codigo = obtenerCodigoEntrada(item);
           const cantidad = obtenerCantidad(item);
-
-          const descripcion =
-            item.descripcion ||
-            item.nombre ||
-            "";
+          const descripcion = item.descripcion || item.nombre || "";
 
           if (!inventario[codigo]) {
             inventario[codigo] = {
@@ -297,20 +191,23 @@ function procesarSalidas(ref) {
               entradas: 0,
               salidas: 0,
               descEntrada: "",
-              descInterna: ""
+              descInterna: "",
+              descSalida: descripcion,
+              ultimaActualizacion: timestamp
             };
           }
 
           inventario[codigo].salidas += cantidad;
-          inventario[codigo].descEntrada = descripcion;
+          inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
+          inventario[codigo].ultimaActualizacion = timestamp;
         });
-
         return;
       }
 
       // 🔥 2. Salida simple
       const codigo = obtenerCodigoEntrada(data);
       const cantidad = obtenerCantidad(data);
+      const descripcion = data.descripcion || data.nombre || "";
 
       if (!inventario[codigo]) {
         inventario[codigo] = {
@@ -318,58 +215,79 @@ function procesarSalidas(ref) {
           entradas: 0,
           salidas: 0,
           descEntrada: "",
-          descInterna: ""
+          descInterna: "",
+          descSalida: descripcion,
+          ultimaActualizacion: timestamp
         };
       }
 
       inventario[codigo].salidas += cantidad;
-
+      inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
+      inventario[codigo].ultimaActualizacion = timestamp;
     });
 
-    dibujarTabla();
+    salidasCargadas = true;
+    if (entradasCargadas && salidasCargadas) {
+      await actualizarTodasDescripciones();
+    }
   });
 }
 
-
 // =====================================================
-// Cargar descripciones finales
+// ACTUALIZAR TODAS LAS DESCRIPCIONES
 // =====================================================
-async function actualizarDescripciones() {
-
-  for (const codigo of Object.keys(inventario)) {
-inventario[codigo].descripcion =
- inventario[codigo].descEntrada ||
- inventario[codigo].descInterna ||
- await obtenerDescripcion(codigo);
-
-  }
-
+async function actualizarTodasDescripciones() {
+  const promesas = Object.keys(inventario).map(async codigo => {
+    await actualizarDescripcionProducto(codigo);
+  });
+  
+  await Promise.all(promesas);
   dibujarTabla();
 }
 
+// =====================================================
+// VERIFICAR CÁLCULOS (FUNCIÓN NUEVA PARA DEBUG)
+// =====================================================
+function verificarCalculos() {
+  console.log("=== VERIFICACIÓN DE INVENTARIO ===");
+  Object.keys(inventario).forEach(codigo => {
+    const p = inventario[codigo];
+    const existenciaCalculada = p.entradas - p.salidas;
+    console.log(`Código: ${codigo}, Entradas: ${p.entradas}, Salidas: ${p.salidas}, Existencia: ${existenciaCalculada}, Descripción: ${p.descripcion}`);
+  });
+}
 
 // =====================================================
-// TABLA
+// TABLA (CORREGIDA)
 // =====================================================
 function dibujarTabla() {
-
   tabla.innerHTML = "";
 
-  Object.keys(inventario).forEach(codigo => {
+  // Ordenar por código
+  const codigosOrdenados = Object.keys(inventario).sort((a, b) => a.localeCompare(b));
 
+  codigosOrdenados.forEach(codigo => {
     const p = inventario[codigo];
     const existencia = p.entradas - p.salidas;
+
+    // Verificar que el cálculo sea correcto
+    if (p.entradas < p.salidas) {
+      console.warn(`⚠️ Código ${codigo}: Salidas (${p.salidas}) > Entradas (${p.entradas}) = ${existencia}`);
+    }
 
     tabla.innerHTML += `
       <tr>
         <td>${codigo}</td>
-        <td>${p.descripcion}</td>
+        <td>${p.descripcion || "-"}</td>
         <td>${p.entradas}</td>
         <td>${p.salidas}</td>
         <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
       </tr>
     `;
   });
+
+  // Verificar cálculos después de dibujar
+  setTimeout(verificarCalculos, 1000);
 }
 
 
