@@ -159,30 +159,16 @@ async function obtenerDescripcion(codigo, dEntrada, dInterno) {
     return desc;
   }
 
-  // 3. Buscar quitando ceros a la izquierda
+  // 3. Buscar por ID sin ceros
   const codigoSinCeros = codigo.replace(/^0+/, "");
+  const ref2 = doc(db, `productos/${codigoSinCeros}`);
+  const snap2 = await getDoc(ref2);
 
-  if (codigoSinCeros !== codigo) {
-    let q2 = query(collection(db, "productos"), where("codigoBarra", "==", codigoSinCeros));
-    let qs2 = await getDocs(q2);
-
-    if (!qs2.empty) {
-      const d = qs2.docs[0].data();
-      desc = d.concepto || d.descripcion || d.nombre || "-";
-      cacheDescripciones[codigo] = desc;
-      return desc;
-    }
-
-    // 4. Buscar por ID sin ceros
-    const ref2 = doc(db, `productos/${codigoSinCeros}`);
-    const snap2 = await getDoc(ref2);
-
-    if (snap2.exists()) {
-      const d = snap2.data();
-      desc = d.concepto || d.descripcion || d.nombre || "-";
-      cacheDescripciones[codigo] = desc;
-      return desc;
-    }
+  if (snap2.exists()) {
+    const d = snap2.data();
+    desc = d.concepto || d.descripcion || d.nombre || "-";
+    cacheDescripciones[codigo] = desc;
+    return desc;
   }
 
   // Nada encontrado
