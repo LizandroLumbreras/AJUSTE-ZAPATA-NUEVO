@@ -66,7 +66,10 @@ import {
   collection, 
   onSnapshot,
   doc,
-  getDoc
+  getDoc,
+  query,
+  where,
+  getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -112,25 +115,40 @@ function obtenerCantidad(data) {
 
 
 // ------------------------------------------------------
-// OBTENER DESCRIPCIÓN DESDE productos/{codigo}
+// OBTENER DESCRIPCIÓN DESDE productos
+// 1) Busca por ID
+// 2) Si no existe, busca por codigoBarra
 // ------------------------------------------------------
 async function obtenerDescripcion(codigo) {
 
   if (!codigo) return "-";
-
   if (cacheDescripciones[codigo]) return cacheDescripciones[codigo];
-
-  const ref = doc(db, "productos", codigo);
-  const snap = await getDoc(ref);
 
   let desc = "-";
 
+  // 1️⃣ Buscar por documento ID
+  const ref = doc(db, "productos", codigo);
+  const snap = await getDoc(ref);
+
   if (snap.exists()) {
     const d = snap.data();
-
-    // Tus productos usan CAMPO "concepto"
     desc = d.concepto || "-";
+    cacheDescripciones[codigo] = desc;
+    return desc;
   }
+
+  // 2️⃣ Si no existe ID, buscar por campo codigoBarra (soluciona equivalencias)
+  const q = query(
+    collection(db, "productos"),
+    where("codigoBarra", "==", codigo)
+  );
+
+  const querySnap = await getDocs(q);
+
+  querySnap.forEach(docu => {
+    const d = docu.data();
+    desc = d.concepto || "-";
+  });
 
   cacheDescripciones[codigo] = desc;
   return desc;
@@ -148,7 +166,7 @@ function procesarEntradas(ref) {
     snap.forEach(docu => {
       const data = docu.data();
 
-      // Si viene en array de productos
+      // Entradas con arreglo productos[]
       if (Array.isArray(data.productos)) {
 
         data.productos.forEach(item => {
