@@ -149,27 +149,29 @@ async function obtenerDescripcion(codigo, dEntrada, dInterno) {
   }
 
   // 2. Buscar por ID EXACTO
-  const ref = doc(db, `productos/${codigo}`);
-  const snap = await getDoc(ref);
+// 2. Buscar por ID EXACTO
+const ref = doc(db, "productos", codigo);
+const snap = await getDoc(ref);
 
-  if (snap.exists()) {
-    const d = snap.data();
-    desc = d.concepto || d.descripcion || d.nombre || "-";
-    cacheDescripciones[codigo] = desc;
-    return desc;
-  }
+if (snap.exists()) {
+  const d = snap.data();
+  desc = d.concepto || d.descripcion || d.nombre || "-";
+  cacheDescripciones[codigo] = desc;
+  return desc;
+}
 
-  // 3. Buscar por ID sin ceros
-  const codigoSinCeros = codigo.replace(/^0+/, "");
-  const ref2 = doc(db, `productos/${codigoSinCeros}`);
-  const snap2 = await getDoc(ref2);
+// 3. Buscar por ID sin ceros
+const codigoSinCeros = codigo.replace(/^0+/, "");
+const ref2 = doc(db, "productos", codigoSinCeros);
+const snap2 = await getDoc(ref2);
 
-  if (snap2.exists()) {
-    const d = snap2.data();
-    desc = d.concepto || d.descripcion || d.nombre || "-";
-    cacheDescripciones[codigo] = desc;
-    return desc;
-  }
+if (snap2.exists()) {
+  const d = snap2.data();
+  desc = d.concepto || d.descripcion || d.nombre || "-";
+  cacheDescripciones[codigo] = desc;
+  return desc;
+}
+
 
   // Nada encontrado
   cacheDescripciones[codigo] = "-";
