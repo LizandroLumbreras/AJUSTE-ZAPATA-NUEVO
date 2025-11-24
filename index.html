@@ -178,21 +178,50 @@ async function obtenerDescripcion(codigo) {
   cacheDescripciones[codigo] = "-";
   return "-";
 }
+async function obtenerProveedor(codigo) {
+  if (!codigo) return "-";
+
+  const codigoNorm = normalizarCodigo(codigo);
+
+  // Buscar por codigoBarra
+  try {
+    const q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigoNorm));
+    const qs1 = await getDocs(q1);
+    if (!qs1.empty) return qs1.docs[0].data().proveedor || "-";
+  } catch (e) {}
+
+  // Buscar por ID exacto
+  try {
+    const snap = await getDoc(doc(db, "productos", codigoNorm));
+    if (snap.exists()) return snap.data().proveedor || "-";
+  } catch (e) {}
+
+  // Buscar por ID sin ceros
+  try {
+    const codigoSin = codigoNorm.replace(/^0+/, "");
+    const snap2 = await getDoc(doc(db, "productos", codigoSin));
+    if (snap2.exists()) return snap2.data().proveedor || "-";
+  } catch (e) {}
+
+  return "-";
+}
 
 // =====================================================
 // ACTUALIZAR DESCRIPCIÓN CON PRIORIDAD DE SALIDAS
 // =====================================================
 async function actualizarDescripcionProducto(codigo) {
   const producto = inventario[codigo];
-  
-  // PRIORIDAD: 1) Descripción de salida, 2) Descripción de entrada, 3) Buscar en Firestore
+
   let descripcionFinal = producto.descSalida || producto.descEntrada || producto.descInterna;
-  
+
   if (!descripcionFinal || descripcionFinal === "-") {
     descripcionFinal = await obtenerDescripcion(codigo);
   }
-  
+
   inventario[codigo].descripcion = descripcionFinal;
+
+  // ✔ Siempre traer el proveedor
+  producto.proveedor = await obtenerProveedor(codigo);
 }
 
 // =====================================================
@@ -357,29 +386,46 @@ function verificarCalculos() {
 function dibujarTabla() {
   tabla.innerHTML = "";
 
-  // Ordenar por código
-  const codigosOrdenados = Object.keys(inventario).sort((a, b) => a.localeCompare(b));
+  // 1. Agrupar por proveedor
+  const proveedores = {};
 
-  codigosOrdenados.forEach(codigo => {
+  Object.keys(inventario).forEach(codigo => {
     const p = inventario[codigo];
-    const existencia = p.entradas - p.salidas;
+    const prov = p.proveedor || "-";
 
-    // Verificar que el cálculo sea correcto
-    if (p.entradas < p.salidas) {
-      console.warn(`⚠️ Código ${codigo}: Salidas (${p.salidas}) > Entradas (${p.entradas}) = ${existencia}`);
-    }
-
-    tabla.innerHTML += `
-      <tr>
-        <td>${codigo}</td>
-        <td>${p.descripcion || "-"}</td>
-        <td>${p.entradas}</td>
-        <td>${p.salidas}</td>
-        <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
-      </tr>
-    `;
+    if (!proveedores[prov]) proveedores[prov] = [];
+    proveedores[prov].push({ codigo, ...p });
   });
 
+  // 2. Ordenar proveedores alfabéticamente
+  const listaProveedores = Object.keys(proveedores).sort();
+
+  // 3. Dibujar proveedor → productos
+  listaProveedores.forEach(prov => {
+    // Subtítulo de proveedor
+    tabla.innerHTML += `
+      <tr style="background:#ddd; font-weight:bold;">
+        <td colspan="5">${prov}</td>
+      </tr>
+    `;
+
+    // Ordenar productos por código dentro del proveedor
+    proveedores[prov].sort((a, b) => a.codigo.localeCompare(b.codigo));
+
+    proveedores[prov].forEach(prod => {
+      const existencia = prod.entradas - prod.salidas;
+
+      tabla.innerHTML += `
+        <tr>
+          <td>${prod.codigo}</td>
+          <td>${prod.descripcion}</td>
+          <td>${prod.entradas}</td>
+          <td>${prod.salidas}</td>
+          <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
+        </tr>
+      `;
+    });
+  });
   // Verificar cálculos después de dibujar
   setTimeout(verificarCalculos, 1000);
 }
