@@ -385,10 +385,30 @@ function dibujarTabla() {
 }
 
 // =====================================================
-// INICIO
+// FILTRO DE FECHAS
 // =====================================================
-procesarEntradas(collection(db, "almacenes/almacen_zapata/entradas"));
-procesarSalidas(collection(db, "almacenes/almacen_zapata/salidas"));
+
+// Entradas DESDE: 10 nov 2025
+const fechaEntradas = new Date("2025-11-10T00:00:00");
+
+// Salidas DESDE: 15 nov 2025
+const fechaSalidas = new Date("2025-11-15T00:00:00");
+
+// Query filtrado para ENTRADAS
+const refEntradas = query(
+  collection(db, "almacenes/almacen_zapata/entradas"),
+  where("fecha", ">=", fechaEntradas)
+);
+
+// Query filtrado para SALIDAS
+const refSalidas = query(
+  collection(db, "almacenes/almacen_zapata/salidas"),
+  where("fecha", ">=", fechaSalidas)
+);
+
+// Procesar con el filtro aplicado
+procesarEntradas(refEntradas);
+procesarSalidas(refSalidas);
 
 </script>
 </body>
