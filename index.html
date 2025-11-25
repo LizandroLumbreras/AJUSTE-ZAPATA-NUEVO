@@ -34,6 +34,16 @@
  }
  .positivo{ color:green; font-weight:bold; }
  .negativo{ color:red; font-weight:bold; }
+ .btn{
+   margin-top:20px; 
+   padding:12px 20px; 
+   background:#00416A; 
+   color:white; 
+   border:none; 
+   border-radius:6px; 
+   font-size:16px; 
+   cursor:pointer;
+ }
 </style>
 </head>
 
@@ -44,24 +54,27 @@
 <table>
 <thead>
    <tr>
-    <!-- <th>Proveedor</th> -->
      <th>Código</th>
      <th>Descripción</th>
      <th>Entradas</th>
      <th>Salidas</th>
      <th>Existencia</th>
+     <th>Inventario físico</th>
+     <th>Diferencia</th>
    </tr>
 </thead>
 
 <tbody id="tablaInventario"></tbody>
 </table>
 
+<button id="btnGuardarAjustes" class="btn">Guardar ajustes de inventario</button>
+
 <script type="module">
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
   getFirestore, collection, query, where,
-  getDocs, onSnapshot
+  getDocs, onSnapshot, addDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -130,12 +143,10 @@ async function cargarProductosProveedor() {
       salidas: 0
     };
   });
-
-  console.log("Productos activos con proveedor:", inventario);
 }
 
 // ======================================================
-// 2. PROCESAR ENTRADAS
+// 2. PROCESAR ENTRADAS (TIPO 1 Y TIPO 2)
 // ======================================================
 function cargarEntradas() {
   const ref = collection(db, "almacenes/almacen_zapata/entradas");
@@ -177,10 +188,9 @@ function cargarEntradas() {
 }
 
 // ======================================================
-// 3. PROCESAR SALIDAS (CON FILTRO DE FECHA NUEVO)
+// 3. PROCESAR SALIDAS (CON FECHA MÍNIMA)
 // ======================================================
 
-// Fecha mínima permitida
 const fechaMinimaSalidas = new Date("2025-11-24T00:00:00");
 
 function cargarSalidas() {
@@ -191,22 +201,15 @@ function cargarSalidas() {
     snap.forEach(docu => {
       const data = docu.data();
 
-      // Validación del timestamp
       if (!data.timestamp) return;
 
       let fechaSalida;
 
-      // Firebase Timestamp
-      if (data.timestamp.toDate) {
-        fechaSalida = data.timestamp.toDate();
-      } else {
-        fechaSalida = new Date(data.timestamp);
-      }
+      if (data.timestamp.toDate) fechaSalida = data.timestamp.toDate();
+      else fechaSalida = new Date(data.timestamp);
 
-      // Solo considerar del 24 noviembre 2025 en adelante
       if (fechaSalida < fechaMinimaSalidas) return;
 
-      // Procesar artículos
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
 
@@ -228,7 +231,7 @@ function cargarSalidas() {
 }
 
 // ======================================================
-// 4. DIBUJAR TABLA AGRUPADA POR PROVEEDOR
+// 4. DIBUJAR TABLA COMPLETA CON FÍSICO + DIFERENCIA
 // ======================================================
 function dibujar() {
   tabla.innerHTML = "";
@@ -247,7 +250,7 @@ function dibujar() {
 
     tabla.innerHTML += `
       <tr>
-        <td colspan="6" 
+        <td colspan="7" 
             style="
               background: linear-gradient(to right, #00416A, #0c6cbd);
               color: white;
@@ -264,26 +267,117 @@ function dibujar() {
     porProveedor[prov].sort((a,b) => a.codigo.localeCompare(b.codigo));
 
     porProveedor[prov].forEach(p => {
+
       const existencia = p.entradas - p.salidas;
       const clase = existencia < 0 ? "negativo" : "positivo";
 
       tabla.innerHTML += `
         <tr>
-          <!-- <td style="background:#f9f9f9;"></td> -->
           <td>${p.codigo}</td>
           <td>${p.descripcion}</td>
           <td>${p.entradas}</td>
           <td>${p.salidas}</td>
           <td class="${clase}">${existencia}</td>
+
+          <td>
+            <input type="number"
+                  id="fisico_${p.codigo}"
+                  style="width:80px; padding:6px;"
+                  oninput="calcularDiferencia('${p.codigo}', ${existencia})">
+          </td>
+
+          <td id="dif_${p.codigo}" style="font-weight:bold; color:#555;">
+            0
+          </td>
         </tr>
       `;
     });
 
     tabla.innerHTML += `
-      <tr><td colspan="5" style="height:8px; background:#eaeaea;"></td></tr>
+      <tr><td colspan="7" style="height:8px; background:#eaeaea;"></td></tr>
     `;
   });
 }
+
+// ======================================================
+// 5. CALCULAR DIFERENCIA EN VIVO
+// ======================================================
+window.calcularDiferencia = function(codigo, existenciaActual) {
+
+  const fisico = Number(document.getElementById("fisico_" + codigo).value);
+  const celda = document.getElementById("dif_" + codigo);
+
+  if (isNaN(fisico)) {
+    celda.textContent = "0";
+    celda.style.color = "#555";
+    return;
+  }
+
+  const diferencia = fisico - existenciaActual;
+
+  celda.textContent = diferencia;
+
+  if (diferencia > 0) celda.style.color = "green"; 
+  else if (diferencia < 0) celda.style.color = "red";
+  else celda.style.color = "#555";
+};
+
+// ======================================================
+// 6. GUARDAR AJUSTES DE INVENTARIO (ENTRADAS/SALIDAS)
+// ======================================================
+async function guardarAjustesInventario() {
+
+  let ajustesEntrada = [];
+  let ajustesSalida  = [];
+
+  for (const codigo of Object.keys(inventario)) {
+    const p = inventario[codigo];
+    const existencia = p.entradas - p.salidas;
+
+    const input = document.getElementById("fisico_" + codigo);
+    if (!input) continue;
+
+    const fisico = Number(input.value);
+    if (isNaN(fisico) || fisico === "") continue;
+
+    const diferencia = fisico - existencia;
+
+    if (diferencia === 0) continue;
+
+    if (diferencia > 0) {
+      ajustesEntrada.push({ codigo, cantidad: diferencia });
+    } else {
+      ajustesSalida.push({ codigo, cantidad: Math.abs(diferencia) });
+    }
+  }
+
+  if (ajustesEntrada.length === 0 && ajustesSalida.length === 0) {
+    alert("No hay ajustes para guardar.");
+    return;
+  }
+
+  const fecha = new Date();
+
+  if (ajustesEntrada.length > 0) {
+    await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
+      movimiento: "ajuste_inventario",
+      fecha,
+      productos: ajustesEntrada
+    });
+  }
+
+  if (ajustesSalida.length > 0) {
+    await addDoc(collection(db, "almacenes/almacen_zapata/salidas1.0"), {
+      movimiento: "ajuste_inventario",
+      timestamp: fecha,
+      articulos: ajustesSalida
+    });
+  }
+
+  alert("Ajustes aplicados correctamente.");
+}
+
+document.getElementById("btnGuardarAjustes").addEventListener("click", guardarAjustesInventario);
 
 // ======================================================
 // EJECUCIÓN
