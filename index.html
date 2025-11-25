@@ -337,12 +337,20 @@ async function guardarAjustesInventario() {
     const input = document.getElementById("fisico_" + codigo);
     if (!input) continue;
 
-    const fisico = Number(input.value);
-    if (isNaN(fisico) || fisico === "") continue;
+const valor = input.value.trim();
 
-    const diferencia = fisico - existencia;
+// ⛔ SI NO ESCRIBIÓ NADA → NO HACER AJUSTE
+if (valor === "" || valor === null) continue;
 
-    if (diferencia === 0) continue;
+const fisico = Number(valor);
+
+// ⛔ SI NO ES UN NÚMERO → ignorar
+if (isNaN(fisico)) continue;
+
+const diferencia = fisico - existencia;
+
+// ⛔ SI NO HAY CAMBIO → ignorar
+if (diferencia === 0) continue;
 
     if (diferencia > 0) {
       ajustesEntrada.push({ codigo, cantidad: diferencia });
