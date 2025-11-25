@@ -44,6 +44,7 @@
 <table>
 <thead>
    <tr>
+    <!-- <th>Proveedor</th> -->
      <th>Código</th>
      <th>Descripción</th>
      <th>Entradas</th>
@@ -51,6 +52,7 @@
      <th>Existencia</th>
    </tr>
 </thead>
+
 <tbody id="tablaInventario"></tbody>
 </table>
 
@@ -58,8 +60,8 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
-  getFirestore, collection, onSnapshot, doc, getDoc,
-  query, where, getDocs
+  getFirestore, collection, query, where,
+  getDocs, onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -74,388 +76,223 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// =====================================================
-// VARIABLES
-// =====================================================
-let inventario = {};
-let cacheDescripciones = {};
 const tabla = document.getElementById("tablaInventario");
-let entradasCargadas = false;
-let salidasCargadas = false;
 
-// =====================================================
-// FUNCIONES BÁSICAS (FALTABAN)
-// =====================================================
+let inventario = {};     
+let entradasListas = false;
+let salidasListas  = false;
 
-// DETECTAR CÓDIGO (TODAS LAS VARIANTES)
-function obtenerCodigoEntrada(data) {
+// ===============================
+// NORMALIZADORES
+// ===============================
+function normCodigo(cod) {
+  if (!cod) return "";
+  cod = cod.toString().trim();
+  if (cod.length === 12) return cod;
+  return cod.padStart(12, "0");
+}
+
+function obtenerCantidad(obj) {
+  return Number(obj.cantidad || 0);
+}
+
+function obtenerCodigo(obj) {
   return (
-    data.codigoBarra ||
-    data.codigobarra ||
-    data.codigoBarras ||
-    data.codigo_barras ||
-    data.codigo ||
-    data.productoId ||
-    data.productoID ||
-    data.productoid ||
+    obj.codigoBarra ||
+    obj.codigobarra ||
+    obj.codigoBarras ||
+    obj.codigo ||
+    obj.productoID ||
+    obj.productoId ||
     ""
   ).toString().trim();
 }
 
-// DETECTAR CANTIDAD
-function obtenerCantidad(data) {
-  return Number(data.cantidad || 0);
+// ======================================================
+// 1. LEER SOLO PRODUCTOS ACTIVOS CON PROVEEDOR
+// ======================================================
+async function cargarProductosProveedor() {
+
+  const q = query(collection(db, "productos"), where("activo", "==", true));
+  const snap = await getDocs(q);
+
+  snap.forEach(doc => {
+    const d = doc.data();
+
+    if (!d.proveedor || d.proveedor.toString().trim() === "") return;
+
+    const codigo = normCodigo(d.codigoBarra || d.codigo || "");
+
+    inventario[codigo] = {
+      proveedor: d.proveedor,
+      descripcion: d.concepto || d.descripcion || "-",
+      entradas: 0,
+      salidas: 0
+    };
+  });
+
+  console.log("Productos activos con proveedor:", inventario);
 }
 
-// NORMALIZAR CÓDIGO
-function normalizarCodigo(codigo) {
-  codigo = codigo.toString().trim();
-  if (codigo.length === 12) return codigo;
-  return codigo.padStart(12, "0");
-}
+// ======================================================
+// 2. PROCESAR ENTRADAS
+// ======================================================
+function cargarEntradas() {
+  const ref = collection(db, "almacenes/almacen_zapata/entradas");
 
-// =====================================================
-// OBTENER DESCRIPCIÓN DE FIRESTORE
-// =====================================================
-async function obtenerDescripcion(codigo) {
-  if (!codigo || codigo === "") return "-";
-
-  codigo = normalizarCodigo(codigo);
-
-  if (cacheDescripciones[codigo]) {
-    return cacheDescripciones[codigo];
-  }
-
-  let desc = null;
-
-  // 1. Buscar por codigoBarra EXACTO
-  try {
-    let q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
-    let qs1 = await getDocs(q1);
-
-    if (!qs1.empty) {
-      const d = qs1.docs[0].data();
-      desc = d.concepto || d.descripcion || d.nombre || "-";
-      cacheDescripciones[codigo] = desc;
-      return desc;
-    }
-  } catch (error) {
-    console.warn("Error buscando por código de barras:", error);
-  }
-
-  // 2. Buscar por ID EXACTO
-  try {
-    const ref = doc(db, "productos", codigo);
-    const snap = await getDoc(ref);
-
-    if (snap.exists()) {
-      const d = snap.data();
-      desc = d.concepto || d.descripcion || d.nombre || "-";
-      cacheDescripciones[codigo] = desc;
-      return desc;
-    }
-  } catch (error) {
-    console.warn("Error buscando por ID exacto:", error);
-  }
-
-  // 3. Buscar por ID sin ceros
-  try {
-    const codigoSinCeros = codigo.replace(/^0+/, "");
-    const ref2 = doc(db, "productos", codigoSinCeros);
-    const snap2 = await getDoc(ref2);
-
-    if (snap2.exists()) {
-      const d = snap2.data();
-      desc = d.concepto || d.descripcion || d.nombre || "-";
-      cacheDescripciones[codigo] = desc;
-      return desc;
-    }
-  } catch (error) {
-    console.warn("Error buscando por ID sin ceros:", error);
-  }
-
-  // Nada encontrado
-  cacheDescripciones[codigo] = "-";
-  return "-";
-}
-async function obtenerProveedor(codigo) {
-  if (!codigo) return "-";
-
-  const codigoNorm = normalizarCodigo(codigo);
-
-  // Buscar por codigoBarra
-  try {
-    const q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigoNorm));
-    const qs1 = await getDocs(q1);
-    if (!qs1.empty) return qs1.docs[0].data().proveedor || "-";
-  } catch (e) {}
-
-  // Buscar por ID exacto
-  try {
-    const snap = await getDoc(doc(db, "productos", codigoNorm));
-    if (snap.exists()) return snap.data().proveedor || "-";
-  } catch (e) {}
-
-  // Buscar por ID sin ceros
-  try {
-    const codigoSin = codigoNorm.replace(/^0+/, "");
-    const snap2 = await getDoc(doc(db, "productos", codigoSin));
-    if (snap2.exists()) return snap2.data().proveedor || "-";
-  } catch (e) {}
-
-  return "-";
-}
-
-// =====================================================
-// ACTUALIZAR DESCRIPCIÓN CON PRIORIDAD DE SALIDAS
-// =====================================================
-async function actualizarDescripcionProducto(codigo) {
-  const producto = inventario[codigo];
-
-  let descripcionFinal = producto.descSalida || producto.descEntrada || producto.descInterna;
-
-  if (!descripcionFinal || descripcionFinal === "-") {
-    descripcionFinal = await obtenerDescripcion(codigo);
-  }
-
-  inventario[codigo].descripcion = descripcionFinal;
-
-  // ✔ Siempre traer el proveedor
-  producto.proveedor = await obtenerProveedor(codigo);
-}
-
-// =====================================================
-// PROCESAR ENTRADAS (CORREGIDO)
-// =====================================================
-function procesarEntradas(ref) {
-  onSnapshot(ref, async snap => {
+  onSnapshot(ref, snap => {
     snap.forEach(docu => {
       const data = docu.data();
-      const timestamp = data.fecha?.toDate?.() || new Date();
 
-      // ARRAY productos[]
+      // Entradas tipo 1 (conceptos_detalle)
+      if (Array.isArray(data.conceptos_detalle)) {
+        data.conceptos_detalle.forEach(item => {
+          const codigo = normCodigo(item.codigo || item.productoId || "");
+          const cantidad = Number(item.cantidad || item.cantidadTotal || 0);
+          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
+        });
+      }
+
+      // Entradas tipo 2 (productos)
       if (Array.isArray(data.productos)) {
         data.productos.forEach(item => {
-          const codigo = obtenerCodigoEntrada(item);
-          const cantidad = obtenerCantidad(item);
-          const descripcion = item.descripcion || item.descripcion_producto || item.descripcionEntrada || item.desc || item.nombre || "";
-          const productoInterno = item.productoInterno || item.productointerno || item.producto_interno || item.producto || "";
-
-          if (!inventario[codigo]) {
-            inventario[codigo] = {
-              descripcion: "-",
-              entradas: 0,
-              salidas: 0,
-              descEntrada: descripcion,
-              descInterna: productoInterno,
-              descSalida: "",
-              ultimaActualizacion: timestamp
-            };
-          }
-
-          inventario[codigo].entradas += cantidad;
-          inventario[codigo].descEntrada = descripcion;
-          inventario[codigo].descInterna = productoInterno;
-          inventario[codigo].ultimaActualizacion = timestamp;
+          const codigo = normCodigo(
+            item.codigoBarra ||
+            item.codigobarras ||
+            item.codigo ||
+            item.productoId ||
+            item.productoID ||
+            ""
+          );
+          const cantidad = Number(item.cantidad || 0);
+          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
         });
-        return;
       }
 
-      // ENTRADA SIMPLE
-      const codigo = obtenerCodigoEntrada(data);
-      const cantidad = obtenerCantidad(data);
-      const descripcion = data.descripcion || data.descripcion_producto || data.descripcionEntrada || data.desc || data.nombre || "";
-      const productoInterno = data.productoInterno || data.productointerno || data.producto_interno || data.producto || "";
-
-      if (!inventario[codigo]) {
-        inventario[codigo] = {
-          descripcion: "-",
-          entradas: 0,
-          salidas: 0,
-          descEntrada: descripcion,
-          descInterna: productoInterno,
-          descSalida: "",
-          ultimaActualizacion: timestamp
-        };
-      }
-
-      inventario[codigo].entradas += cantidad;
-      inventario[codigo].descEntrada = descripcion;
-      inventario[codigo].descInterna = productoInterno;
-      inventario[codigo].ultimaActualizacion = timestamp;
     });
 
-    entradasCargadas = true;
-    if (entradasCargadas && salidasCargadas) {
-      await actualizarTodasDescripciones();
-    }
+    entradasListas = true;
+    if (entradasListas && salidasListas) dibujar();
   });
 }
 
-// =====================================================
-// PROCESAR SALIDAS (CORREGIDO)
-// =====================================================
-function procesarSalidas(ref) {
-  onSnapshot(ref, async snap => {
+// ======================================================
+// 3. PROCESAR SALIDAS (CON FILTRO DE FECHA NUEVO)
+// ======================================================
+
+// Fecha mínima permitida
+const fechaMinimaSalidas = new Date("2025-11-24T00:00:00");
+
+function cargarSalidas() {
+  const ref = collection(db, "almacenes/almacen_zapata/salidas");
+
+  onSnapshot(ref, snap => {
+
     snap.forEach(docu => {
       const data = docu.data();
-      const timestamp = data.fecha?.toDate?.() || new Date();
 
-      // 🔥 1. Si trae ARRAY articulos[], procesarlo
+      // Validación del timestamp
+      if (!data.timestamp) return;
+
+      let fechaSalida;
+
+      // Firebase Timestamp
+      if (data.timestamp.toDate) {
+        fechaSalida = data.timestamp.toDate();
+      } else {
+        fechaSalida = new Date(data.timestamp);
+      }
+
+      // Solo considerar del 24 noviembre 2025 en adelante
+      if (fechaSalida < fechaMinimaSalidas) return;
+
+      // Procesar artículos
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
-          const codigo = obtenerCodigoEntrada(item);
-          const cantidad = obtenerCantidad(item);
-          const descripcion = item.descripcion || item.nombre || "";
 
-          if (!inventario[codigo]) {
-            inventario[codigo] = {
-              descripcion: "-",
-              entradas: 0,
-              salidas: 0,
-              descEntrada: "",
-              descInterna: "",
-              descSalida: descripcion,
-              ultimaActualizacion: timestamp
-            };
+          const cod = normCodigo(obtenerCodigo(item));
+          const cant = obtenerCantidad(item);
+
+          if (inventario[cod]) {
+            inventario[cod].salidas += cant;
           }
 
-          inventario[codigo].salidas += cantidad;
-          inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
-          inventario[codigo].ultimaActualizacion = timestamp;
         });
-        return;
       }
 
-      // 🔥 2. Salida simple
-      const codigo = obtenerCodigoEntrada(data);
-      const cantidad = obtenerCantidad(data);
-      const descripcion = data.descripcion || data.nombre || "";
-
-      if (!inventario[codigo]) {
-        inventario[codigo] = {
-          descripcion: "-",
-          entradas: 0,
-          salidas: 0,
-          descEntrada: "",
-          descInterna: "",
-          descSalida: descripcion,
-          ultimaActualizacion: timestamp
-        };
-      }
-
-      inventario[codigo].salidas += cantidad;
-      inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
-      inventario[codigo].ultimaActualizacion = timestamp;
     });
 
-    salidasCargadas = true;
-    if (entradasCargadas && salidasCargadas) {
-      await actualizarTodasDescripciones();
-    }
+    salidasListas = true;
+    if (entradasListas && salidasListas) dibujar();
   });
 }
 
-// =====================================================
-// ACTUALIZAR TODAS LAS DESCRIPCIONES
-// =====================================================
-async function actualizarTodasDescripciones() {
-  const promesas = Object.keys(inventario).map(async codigo => {
-    await actualizarDescripcionProducto(codigo);
-  });
-  
-  await Promise.all(promesas);
-  dibujarTabla();
-}
-
-// =====================================================
-// VERIFICAR CÁLCULOS (FUNCIÓN NUEVA PARA DEBUG)
-// =====================================================
-function verificarCalculos() {
-  console.log("=== VERIFICACIÓN DE INVENTARIO ===");
-  Object.keys(inventario).forEach(codigo => {
-    const p = inventario[codigo];
-    const existenciaCalculada = p.entradas - p.salidas;
-    console.log(`Código: ${codigo}, Entradas: ${p.entradas}, Salidas: ${p.salidas}, Existencia: ${existenciaCalculada}, Descripción: "${p.descripcion}"`);
-  });
-}
-
-// =====================================================
-// TABLA (CORREGIDA)
-// =====================================================
-function dibujarTabla() {
+// ======================================================
+// 4. DIBUJAR TABLA AGRUPADA POR PROVEEDOR
+// ======================================================
+function dibujar() {
   tabla.innerHTML = "";
 
-  // 1. Agrupar por proveedor
-  const proveedores = {};
+  const porProveedor = {};
 
-  Object.keys(inventario).forEach(codigo => {
-    const p = inventario[codigo];
-    const prov = p.proveedor || "-";
-
-    if (!proveedores[prov]) proveedores[prov] = [];
-    proveedores[prov].push({ codigo, ...p });
+  Object.keys(inventario).forEach(cod => {
+    const p = inventario[cod];
+    if (!porProveedor[p.proveedor]) porProveedor[p.proveedor] = [];
+    porProveedor[p.proveedor].push({ codigo: cod, ...p });
   });
 
-  // 2. Ordenar proveedores alfabéticamente
-  const listaProveedores = Object.keys(proveedores).sort();
+  const proveedoresOrdenados = Object.keys(porProveedor).sort();
 
-  // 3. Dibujar proveedor → productos
-  listaProveedores.forEach(prov => {
-    // Subtítulo de proveedor
+  proveedoresOrdenados.forEach(prov => {
+
     tabla.innerHTML += `
-      <tr style="background:#ddd; font-weight:bold;">
-        <td colspan="5">${prov}</td>
+      <tr>
+        <td colspan="6" 
+            style="
+              background: linear-gradient(to right, #00416A, #0c6cbd);
+              color: white;
+              font-size:20px;
+              font-weight:bold;
+              padding:14px;
+              border-top: 4px solid #003354;
+            ">
+            ${prov}
+        </td>
       </tr>
     `;
 
-    // Ordenar productos por código dentro del proveedor
-    proveedores[prov].sort((a, b) => a.codigo.localeCompare(b.codigo));
+    porProveedor[prov].sort((a,b) => a.codigo.localeCompare(b.codigo));
 
-    proveedores[prov].forEach(prod => {
-      const existencia = prod.entradas - prod.salidas;
+    porProveedor[prov].forEach(p => {
+      const existencia = p.entradas - p.salidas;
+      const clase = existencia < 0 ? "negativo" : "positivo";
 
       tabla.innerHTML += `
         <tr>
-          <td>${prod.codigo}</td>
-          <td>${prod.descripcion}</td>
-          <td>${prod.entradas}</td>
-          <td>${prod.salidas}</td>
-          <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
+          <!-- <td style="background:#f9f9f9;"></td> -->
+          <td>${p.codigo}</td>
+          <td>${p.descripcion}</td>
+          <td>${p.entradas}</td>
+          <td>${p.salidas}</td>
+          <td class="${clase}">${existencia}</td>
         </tr>
       `;
     });
+
+    tabla.innerHTML += `
+      <tr><td colspan="5" style="height:8px; background:#eaeaea;"></td></tr>
+    `;
   });
-  // Verificar cálculos después de dibujar
-  setTimeout(verificarCalculos, 1000);
 }
 
-// =====================================================
-// FILTRO DE FECHAS
-// =====================================================
-
-// Entradas DESDE: 10 nov 2025
-const fechaEntradas = new Date("2025-11-10T00:00:00");
-
-// Salidas DESDE: 15 nov 2025
-const fechaSalidas = "2025-11-15";
-
-// Query filtrado para ENTRADAS
-const refEntradas = query(
-  collection(db, "almacenes/almacen_zapata/entradas"),
-  where("fecha", ">=", fechaEntradas)
-);
-
-// Query filtrado para SALIDAS
-const refSalidas = query(
-  collection(db, "almacenes/almacen_zapata/salidas"),
-  where("fecha", ">=", fechaSalidas)
-);
-
-// Procesar con el filtro aplicado
-procesarEntradas(refEntradas);
-procesarSalidas(refSalidas);
+// ======================================================
+// EJECUCIÓN
+// ======================================================
+await cargarProductosProveedor();
+cargarEntradas();
+cargarSalidas();
 
 </script>
+
 </body>
 </html>
