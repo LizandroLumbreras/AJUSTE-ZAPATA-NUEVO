@@ -58,7 +58,8 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
-  getFirestore, collection, getDocs
+  getFirestore, collection, onSnapshot, doc, getDoc,
+  query, where, getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -72,157 +73,388 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+// =====================================================
+// VARIABLES
+// =====================================================
+let inventario = {};
+let cacheDescripciones = {};
 const tabla = document.getElementById("tablaInventario");
-
+let entradasCargadas = false;
+let salidasCargadas = false;
 
 // =====================================================
-// 1) CARGAR PRODUCTOS Y ORDENAR POR PROVEEDOR
+// FUNCIONES BÁSICAS (FALTABAN)
 // =====================================================
-async function cargarProductos() {
-  const ref = collection(db, "productos");
-  const snap = await getDocs(ref);
-  
-  let productos = [];
 
-  snap.forEach(docu => {
-    const data = docu.data();
-
-    productos.push({
-      codigo: docu.id,
-      descripcion: data.concepto || data.descripcion || "",
-      proveedor: data.proveedor || "-",
-      entradas: 0,
-      salidas: 0
-    });
-  });
-
-  // ordenar por proveedor y luego por código
-  productos.sort((a, b) => {
-    if (a.proveedor !== b.proveedor) return a.proveedor.localeCompare(b.proveedor);
-    return a.codigo.localeCompare(b.codigo);
-  });
-
-  return productos;
+// DETECTAR CÓDIGO (TODAS LAS VARIANTES)
+function obtenerCodigoEntrada(data) {
+  return (
+    data.codigoBarra ||
+    data.codigobarra ||
+    data.codigoBarras ||
+    data.codigo_barras ||
+    data.codigo ||
+    data.productoId ||
+    data.productoID ||
+    data.productoid ||
+    ""
+  ).toString().trim();
 }
 
-
-// =====================================================
-// 2) OBTENER ENTRADAS POR CÓDIGO
-// =====================================================
-async function obtenerEntradasPorCodigo(codigo) {
-  const ref = collection(db, "almacenes/almacen_zapata/entradas");
-  const snap = await getDocs(ref);
-
-  let total = 0;
-
-  snap.forEach(docu => {
-    const data = docu.data();
-
-    if (Array.isArray(data.productos)) {
-      data.productos.forEach(p => {
-        if (String(p.codigo) === String(codigo)) {
-          total += Number(p.cantidad || 0);
-        }
-      });
-    } 
-    else if (data.codigo == codigo) {
-      total += Number(data.cantidad || 0);
-    }
-  });
-
-  return total;
+// DETECTAR CANTIDAD
+function obtenerCantidad(data) {
+  return Number(data.cantidad || 0);
 }
 
-
-// =====================================================
-// 3) OBTENER SALIDAS POR CÓDIGO
-// =====================================================
-async function obtenerSalidasPorCodigo(codigo) {
-  const ref = collection(db, "almacenes/almacen_zapata/salidas");
-  const snap = await getDocs(ref);
-
-  let total = 0;
-
-  snap.forEach(docu => {
-    const data = docu.data();
-
-    if (Array.isArray(data.articulos)) {
-      data.articulos.forEach(a => {
-        if (String(a.codigo) === String(codigo)) {
-          total += Number(a.cantidad || 0);
-        }
-      });
-    }
-    else if (data.codigo == codigo) {
-      total += Number(data.cantidad || 0);
-    }
-  });
-
-  return total;
+// NORMALIZAR CÓDIGO
+function normalizarCodigo(codigo) {
+  codigo = codigo.toString().trim();
+  if (codigo.length === 12) return codigo;
+  return codigo.padStart(12, "0");
 }
 
-
 // =====================================================
-// 4) ARMAR INVENTARIO COMPLETO
+// OBTENER DESCRIPCIÓN DE FIRESTORE
 // =====================================================
-async function armarInventario() {
-  const productos = await cargarProductos();
-  const inventario = [];
+async function obtenerDescripcion(codigo) {
+  if (!codigo || codigo === "") return "-";
 
-  for (const prod of productos) {
-    const entradas = await obtenerEntradasPorCodigo(prod.codigo);
-    const salidas = await obtenerSalidasPorCodigo(prod.codigo);
+  codigo = normalizarCodigo(codigo);
 
-    inventario.push({
-      ...prod,
-      entradas,
-      salidas,
-      existencia: entradas - salidas
-    });
+  if (cacheDescripciones[codigo]) {
+    return cacheDescripciones[codigo];
   }
 
-  return inventario;
+  let desc = null;
+
+  // 1. Buscar por codigoBarra EXACTO
+  try {
+    let q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigo));
+    let qs1 = await getDocs(q1);
+
+    if (!qs1.empty) {
+      const d = qs1.docs[0].data();
+      desc = d.concepto || d.descripcion || d.nombre || "-";
+      cacheDescripciones[codigo] = desc;
+      return desc;
+    }
+  } catch (error) {
+    console.warn("Error buscando por código de barras:", error);
+  }
+
+  // 2. Buscar por ID EXACTO
+  try {
+    const ref = doc(db, "productos", codigo);
+    const snap = await getDoc(ref);
+
+    if (snap.exists()) {
+      const d = snap.data();
+      desc = d.concepto || d.descripcion || d.nombre || "-";
+      cacheDescripciones[codigo] = desc;
+      return desc;
+    }
+  } catch (error) {
+    console.warn("Error buscando por ID exacto:", error);
+  }
+
+  // 3. Buscar por ID sin ceros
+  try {
+    const codigoSinCeros = codigo.replace(/^0+/, "");
+    const ref2 = doc(db, "productos", codigoSinCeros);
+    const snap2 = await getDoc(ref2);
+
+    if (snap2.exists()) {
+      const d = snap2.data();
+      desc = d.concepto || d.descripcion || d.nombre || "-";
+      cacheDescripciones[codigo] = desc;
+      return desc;
+    }
+  } catch (error) {
+    console.warn("Error buscando por ID sin ceros:", error);
+  }
+
+  // Nada encontrado
+  cacheDescripciones[codigo] = "-";
+  return "-";
+}
+async function obtenerProveedor(codigo) {
+  if (!codigo) return "-";
+
+  const codigoNorm = normalizarCodigo(codigo);
+
+  // Buscar por codigoBarra
+  try {
+    const q1 = query(collection(db, "productos"), where("codigoBarra", "==", codigoNorm));
+    const qs1 = await getDocs(q1);
+    if (!qs1.empty) return qs1.docs[0].data().proveedor || "-";
+  } catch (e) {}
+
+  // Buscar por ID exacto
+  try {
+    const snap = await getDoc(doc(db, "productos", codigoNorm));
+    if (snap.exists()) return snap.data().proveedor || "-";
+  } catch (e) {}
+
+  // Buscar por ID sin ceros
+  try {
+    const codigoSin = codigoNorm.replace(/^0+/, "");
+    const snap2 = await getDoc(doc(db, "productos", codigoSin));
+    if (snap2.exists()) return snap2.data().proveedor || "-";
+  } catch (e) {}
+
+  return "-";
 }
 
+// =====================================================
+// ACTUALIZAR DESCRIPCIÓN CON PRIORIDAD DE SALIDAS
+// =====================================================
+async function actualizarDescripcionProducto(codigo) {
+  const producto = inventario[codigo];
+
+  let descripcionFinal = producto.descSalida || producto.descEntrada || producto.descInterna;
+
+  if (!descripcionFinal || descripcionFinal === "-") {
+    descripcionFinal = await obtenerDescripcion(codigo);
+  }
+
+  inventario[codigo].descripcion = descripcionFinal;
+
+  // ✔ Siempre traer el proveedor
+  producto.proveedor = await obtenerProveedor(codigo);
+}
 
 // =====================================================
-// 5) DIBUJAR INVENTARIO AGRUPADO POR PROVEEDOR
+// PROCESAR ENTRADAS (CORREGIDO)
 // =====================================================
-function dibujarInventario(inventario) {
-  tabla.innerHTML = "";
+function procesarEntradas(ref) {
+  onSnapshot(ref, async snap => {
+    snap.forEach(docu => {
+      const data = docu.data();
+      const timestamp = data.fecha?.toDate?.() || new Date();
 
-  let proveedorActual = "";
+      // ARRAY productos[]
+      if (Array.isArray(data.productos)) {
+        data.productos.forEach(item => {
+          const codigo = obtenerCodigoEntrada(item);
+          const cantidad = obtenerCantidad(item);
+          const descripcion = item.descripcion || item.descripcion_producto || item.descripcionEntrada || item.desc || item.nombre || "";
+          const productoInterno = item.productoInterno || item.productointerno || item.producto_interno || item.producto || "";
 
-  inventario.forEach(p => {
-    if (p.proveedor !== proveedorActual) {
-      proveedorActual = p.proveedor;
+          if (!inventario[codigo]) {
+            inventario[codigo] = {
+              descripcion: "-",
+              entradas: 0,
+              salidas: 0,
+              descEntrada: descripcion,
+              descInterna: productoInterno,
+              descSalida: "",
+              ultimaActualizacion: timestamp
+            };
+          }
 
-      tabla.innerHTML += `
-        <tr style="background:#ccc; font-weight:bold;">
-          <td colspan="5">${proveedorActual}</td>
-        </tr>
-      `;
+          inventario[codigo].entradas += cantidad;
+          inventario[codigo].descEntrada = descripcion;
+          inventario[codigo].descInterna = productoInterno;
+          inventario[codigo].ultimaActualizacion = timestamp;
+        });
+        return;
+      }
+
+      // ENTRADA SIMPLE
+      const codigo = obtenerCodigoEntrada(data);
+      const cantidad = obtenerCantidad(data);
+      const descripcion = data.descripcion || data.descripcion_producto || data.descripcionEntrada || data.desc || data.nombre || "";
+      const productoInterno = data.productoInterno || data.productointerno || data.producto_interno || data.producto || "";
+
+      if (!inventario[codigo]) {
+        inventario[codigo] = {
+          descripcion: "-",
+          entradas: 0,
+          salidas: 0,
+          descEntrada: descripcion,
+          descInterna: productoInterno,
+          descSalida: "",
+          ultimaActualizacion: timestamp
+        };
+      }
+
+      inventario[codigo].entradas += cantidad;
+      inventario[codigo].descEntrada = descripcion;
+      inventario[codigo].descInterna = productoInterno;
+      inventario[codigo].ultimaActualizacion = timestamp;
+    });
+
+    entradasCargadas = true;
+    if (entradasCargadas && salidasCargadas) {
+      await actualizarTodasDescripciones();
     }
-
-    tabla.innerHTML += `
-      <tr>
-        <td>${p.codigo}</td>
-        <td>${p.descripcion}</td>
-        <td>${p.entradas}</td>
-        <td>${p.salidas}</td>
-        <td class="${p.existencia < 0 ? "negativo" : "positivo"}">${p.existencia}</td>
-      </tr>
-    `;
   });
 }
 
+// =====================================================
+// PROCESAR SALIDAS (CORREGIDO)
+// =====================================================
+function procesarSalidas(ref) {
+  onSnapshot(ref, async snap => {
+    snap.forEach(docu => {
+      const data = docu.data();
+      const timestamp = data.fecha?.toDate?.() || new Date();
+
+      // 🔥 1. Si trae ARRAY articulos[], procesarlo
+      if (Array.isArray(data.articulos)) {
+        data.articulos.forEach(item => {
+          const codigo = obtenerCodigoEntrada(item);
+          const cantidad = obtenerCantidad(item);
+          const descripcion = item.descripcion || item.nombre || "";
+
+          if (!inventario[codigo]) {
+            inventario[codigo] = {
+              descripcion: "-",
+              entradas: 0,
+              salidas: 0,
+              descEntrada: "",
+              descInterna: "",
+              descSalida: descripcion,
+              ultimaActualizacion: timestamp
+            };
+          }
+
+          inventario[codigo].salidas += cantidad;
+          inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
+          inventario[codigo].ultimaActualizacion = timestamp;
+        });
+        return;
+      }
+
+      // 🔥 2. Salida simple
+      const codigo = obtenerCodigoEntrada(data);
+      const cantidad = obtenerCantidad(data);
+      const descripcion = data.descripcion || data.nombre || "";
+
+      if (!inventario[codigo]) {
+        inventario[codigo] = {
+          descripcion: "-",
+          entradas: 0,
+          salidas: 0,
+          descEntrada: "",
+          descInterna: "",
+          descSalida: descripcion,
+          ultimaActualizacion: timestamp
+        };
+      }
+
+      inventario[codigo].salidas += cantidad;
+      inventario[codigo].descSalida = descripcion; // Priorizar descripción de salida
+      inventario[codigo].ultimaActualizacion = timestamp;
+    });
+
+    salidasCargadas = true;
+    if (entradasCargadas && salidasCargadas) {
+      await actualizarTodasDescripciones();
+    }
+  });
+}
 
 // =====================================================
-// 6) INICIAR
+// ACTUALIZAR TODAS LAS DESCRIPCIONES
 // =====================================================
-armarInventario().then(inv => {
-  dibujarInventario(inv);
-});
+async function actualizarTodasDescripciones() {
+  const promesas = Object.keys(inventario).map(async codigo => {
+    await actualizarDescripcionProducto(codigo);
+  });
+  
+  await Promise.all(promesas);
+  dibujarTabla();
+}
+
+// =====================================================
+// VERIFICAR CÁLCULOS (FUNCIÓN NUEVA PARA DEBUG)
+// =====================================================
+function verificarCalculos() {
+  console.log("=== VERIFICACIÓN DE INVENTARIO ===");
+  Object.keys(inventario).forEach(codigo => {
+    const p = inventario[codigo];
+    const existenciaCalculada = p.entradas - p.salidas;
+    console.log(`Código: ${codigo}, Entradas: ${p.entradas}, Salidas: ${p.salidas}, Existencia: ${existenciaCalculada}, Descripción: "${p.descripcion}"`);
+  });
+}
+
+// =====================================================
+// TABLA (CORREGIDA)
+// =====================================================
+function dibujarTabla() {
+  tabla.innerHTML = "";
+
+  // 1. Agrupar por proveedor
+  const proveedores = {};
+
+  Object.keys(inventario).forEach(codigo => {
+    const p = inventario[codigo];
+    const prov = p.proveedor || "-";
+
+    if (!proveedores[prov]) proveedores[prov] = [];
+    proveedores[prov].push({ codigo, ...p });
+  });
+
+  // 2. Ordenar proveedores alfabéticamente
+  const listaProveedores = Object.keys(proveedores).sort();
+
+  // 3. Dibujar proveedor → productos
+  listaProveedores.forEach(prov => {
+    // Subtítulo de proveedor
+    tabla.innerHTML += `
+      <tr style="background:#ddd; font-weight:bold;">
+        <td colspan="5">${prov}</td>
+      </tr>
+    `;
+
+    // Ordenar productos por código dentro del proveedor
+    proveedores[prov].sort((a, b) => a.codigo.localeCompare(b.codigo));
+
+    proveedores[prov].forEach(prod => {
+      const existencia = prod.entradas - prod.salidas;
+
+      tabla.innerHTML += `
+        <tr>
+          <td>${prod.codigo}</td>
+          <td>${prod.descripcion}</td>
+          <td>${prod.entradas}</td>
+          <td>${prod.salidas}</td>
+          <td class="${existencia < 0 ? 'negativo' : 'positivo'}">${existencia}</td>
+        </tr>
+      `;
+    });
+  });
+  // Verificar cálculos después de dibujar
+  setTimeout(verificarCalculos, 1000);
+}
+
+// =====================================================
+// FILTRO DE FECHAS
+// =====================================================
+
+// Entradas DESDE: 10 nov 2025
+const fechaEntradas = new Date("2025-11-10T00:00:00");
+
+// Salidas DESDE: 15 nov 2025
+const fechaSalidas = "2025-11-15";
+
+// Query filtrado para ENTRADAS
+const refEntradas = query(
+  collection(db, "almacenes/almacen_zapata/entradas"),
+  where("fecha", ">=", fechaEntradas)
+);
+
+// Query filtrado para SALIDAS
+const refSalidas = query(
+  collection(db, "almacenes/almacen_zapata/salidas"),
+  where("fecha", ">=", fechaSalidas)
+);
+
+// Procesar con el filtro aplicado
+procesarEntradas(refEntradas);
+procesarSalidas(refSalidas);
 
 </script>
 </body>
