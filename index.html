@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Inventario Profesional – Almacén Zapata</title>
+<title>Inventario – Almacén Zapata</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -34,7 +34,6 @@
  }
  .positivo{ color:green; font-weight:bold; }
  .negativo{ color:red; font-weight:bold; }
-
  .btn{
    margin-top:20px; 
    padding:12px 20px; 
@@ -50,17 +49,16 @@
 
 <body>
 
-<h2>Inventario Total – Almacén Zapata (PROFESIONAL)</h2>
+<h2>Inventario Total – Almacén Zapata</h2>
 
 <table>
 <thead>
    <tr>
      <th>Código</th>
      <th>Descripción</th>
-     <th>Base</th>
-     <th>Entradas nuevas</th>
-     <th>Salidas nuevas</th>
-     <th>Existencia real</th>
+     <th>Entradas</th>
+     <th>Salidas</th>
+     <th>Existencia</th>
      <th>Inventario físico</th>
      <th>Diferencia</th>
    </tr>
@@ -73,18 +71,12 @@
 
 <script type="module">
 
-// ===============================
-// IMPORTS FIREBASE
-// ===============================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
-  getFirestore, collection, doc, query, where,
-  getDocs, setDoc, addDoc, onSnapshot 
+  getFirestore, collection, query, where,
+  getDocs, onSnapshot, addDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// ===============================
-// CONFIG
-// ===============================
 const firebaseConfig = {
   apiKey: "AIzaSyCK5nb6u2CGRJ8AB1aPlRn54b97bdeAFeM",
   authDomain: "inventariopv-643f1.firebaseapp.com",
@@ -97,87 +89,84 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// ===============================
-// VARIABLES
-// ===============================
 const tabla = document.getElementById("tablaInventario");
 
-let productos = {};
-let inventarioBase = {};
-let nuevasEntradas = {};
-let nuevasSalidas = {};
-
-let productosListos = false;
-let baseLista = false;
+let inventario = {};     
 let entradasListas = false;
-let salidasListas = false;
-
-const fechaCorte = new Date("2025-11-24T00:00:00"); // corte operativo
+let salidasListas  = false;
 
 // ===============================
 // NORMALIZADORES
 // ===============================
-function normCodigo(cod){
-  if(!cod) return "";
+function normCodigo(cod) {
+  if (!cod) return "";
   cod = cod.toString().trim();
-  return cod.padStart(12,"0");
+  if (cod.length === 12) return cod;
+  return cod.padStart(12, "0");
 }
 
-// ===============================
-// 1. CARGAR PRODUCTOS ACTIVOS
-// ===============================
-async function cargarProductos(){
-  const q = query(collection(db,"productos"), where("activo","==",true));
+function obtenerCantidad(obj) {
+  return Number(obj.cantidad || 0);
+}
+
+function obtenerCodigo(obj) {
+  return (
+    obj.codigoBarra ||
+    obj.codigobarra ||
+    obj.codigoBarras ||
+    obj.codigo ||
+    obj.productoID ||
+    obj.productoId ||
+    ""
+  ).toString().trim();
+}
+
+// ======================================================
+// 1. LEER SOLO PRODUCTOS ACTIVOS CON PROVEEDOR
+// ======================================================
+async function cargarProductosProveedor() {
+
+  const q = query(collection(db, "productos"), where("activo", "==", true));
   const snap = await getDocs(q);
 
-  snap.forEach(docu=>{
-    const d = docu.data();
-    const codigo = normCodigo(d.codigoBarra || d.codigo || "");
-    if(!codigo) return;
+  snap.forEach(doc => {
+    const d = doc.data();
 
-    productos[codigo] = {
+    if (!d.proveedor || d.proveedor.toString().trim() === "") return;
+
+    const codigo = normCodigo(d.codigoBarra || d.codigo || "");
+
+    inventario[codigo] = {
+      proveedor: d.proveedor,
       descripcion: d.concepto || d.descripcion || "-",
-      proveedor: d.proveedor || "SIN PROVEEDOR"
+      entradas: 0,
+      salidas: 0
     };
   });
-
-  productosListos = true;
-  intentarDibujar();
 }
 
-// ===============================
-// 2. CARGAR INVENTARIO BASE
-// ===============================
-async function cargarBase(){
-  const snap = await getDocs(collection(db,"inventario_base"));
+// ======================================================
+// 2. PROCESAR ENTRADAS (TIPO 1 Y TIPO 2)
+// ======================================================
+function cargarEntradas() {
+  const ref = collection(db, "almacenes/almacen_zapata/entradas");
 
-  snap.forEach(docu=>{
-    const codigo = normCodigo(docu.id);
-    const d = docu.data();
-    inventarioBase[codigo] = d.existencia || 0;
-  });
-
-  baseLista = true;
-  intentarDibujar();
-}
-
-// ===============================
-// 3. CARGAR NUEVAS ENTRADAS
-// ===============================
-function cargarEntradas(){
-  const ref = collection(db,"almacenes/almacen_zapata/entradas");
-
-  onSnapshot(ref,snap=>{
-    nuevasEntradas = {};
-
-    snap.forEach(docu=>{
+  onSnapshot(ref, snap => {
+    snap.forEach(docu => {
       const data = docu.data();
-      const fecha = data.fecha?.toDate?.() || new Date(data.fecha);
 
-      if(fecha <= fechaCorte) return;
+      // Entradas tipo 1 (conceptos_detalle)
+      if (Array.isArray(data.conceptos_detalle)) {
+        data.conceptos_detalle.forEach(item => {
+          const codigo = normCodigo(item.codigo || item.productoId || "");
+          const cantidad = Number(item.cantidad || item.cantidadTotal || 0);
+          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
+        });
+      }
 
-      if(Array.isArray(data.productos)){
-        data.productos.forEach(item=>{
+      // Entradas tipo 2 (productos)
+      if (Array.isArray(data.productos)) {
+        data.productos.forEach(item => {
           const codigo = normCodigo(
             item.codigoBarra ||
             item.codigobarras ||
@@ -186,241 +175,222 @@ function cargarEntradas(){
             item.productoID ||
             ""
           );
-
-          const cant = Number(item.cantidad || 0);
-
-          if(!nuevasEntradas[codigo]) nuevasEntradas[codigo] = 0;
-          nuevasEntradas[codigo] += cant;
+          const cantidad = Number(item.cantidad || 0);
+          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
         });
       }
 
-      if(Array.isArray(data.conceptos_detalle)){
-        data.conceptos_detalle.forEach(item=>{
-          const codigo = normCodigo(item.codigo || item.productoId || "");
-          const cant = Number(item.cantidad || item.cantidadTotal || 0);
-
-          if(!nuevasEntradas[codigo]) nuevasEntradas[codigo] = 0;
-          nuevasEntradas[codigo] += cant;
-        });
-      }
     });
 
     entradasListas = true;
-    intentarDibujar();
+    if (entradasListas && salidasListas) dibujar();
   });
 }
 
-// ===============================
-// 4. CARGAR NUEVAS SALIDAS
-// ===============================
-function cargarSalidas(){
-  const ref = collection(db,"almacenes/almacen_zapata/salidas1.0");
+// ======================================================
+// 3. PROCESAR SALIDAS (CON FECHA MÍNIMA)
+// ======================================================
 
-  onSnapshot(ref,snap=>{
-    nuevasSalidas = {};
+const fechaMinimaSalidas = new Date("2025-11-24T00:00:00");
 
-    snap.forEach(docu=>{
+function cargarSalidas() {
+  const ref = collection(db, "almacenes/almacen_zapata/salidas1.0");
+
+  onSnapshot(ref, snap => {
+
+    snap.forEach(docu => {
       const data = docu.data();
-      const fecha = data.timestamp?.toDate?.() || new Date(data.timestamp);
 
-      if(fecha <= fechaCorte) return;
+      if (!data.timestamp) return;
 
-      if(Array.isArray(data.articulos)){
-        data.articulos.forEach(item=>{
-          const codigo = normCodigo(
-            item.codigoBarra ||
-            item.codigobarra ||
-            item.codigo ||
-            item.productoID ||
-            item.productoId ||
-            ""
-          );
+      let fechaSalida;
 
-          const cant = Number(item.cantidad || 0);
+      if (data.timestamp.toDate) fechaSalida = data.timestamp.toDate();
+      else fechaSalida = new Date(data.timestamp);
 
-          if(!nuevasSalidas[codigo]) nuevasSalidas[codigo] = 0;
-          nuevasSalidas[codigo] += cant;
+      if (fechaSalida < fechaMinimaSalidas) return;
+
+      if (Array.isArray(data.articulos)) {
+        data.articulos.forEach(item => {
+
+          const cod = normCodigo(obtenerCodigo(item));
+          const cant = obtenerCantidad(item);
+
+          if (inventario[cod]) {
+            inventario[cod].salidas += cant;
+          }
+
         });
       }
+
     });
 
     salidasListas = true;
-    intentarDibujar();
+    if (entradasListas && salidasListas) dibujar();
   });
 }
 
-// ===============================
-// 5. DIBUJAR TABLA TOTAL
-// ===============================
-function intentarDibujar(){
-  if(!productosListos || !baseLista || !entradasListas || !salidasListas) return;
-  dibujar();
-}
-
-function dibujar(){
-
+// ======================================================
+// 4. DIBUJAR TABLA COMPLETA CON FÍSICO + DIFERENCIA
+// ======================================================
+function dibujar() {
   tabla.innerHTML = "";
 
-  let porProveedor = {};
+  const porProveedor = {};
 
-  Object.keys(productos).forEach(codigo=>{
-    const p = productos[codigo];
-
-    const base   = inventarioBase[codigo] || 0;
-    const ent    = nuevasEntradas[codigo] || 0;
-    const sal    = nuevasSalidas[codigo] || 0;
-    const exist  = base + ent - sal;
-
-    if(!porProveedor[p.proveedor]) porProveedor[p.proveedor]=[];
-
-    porProveedor[p.proveedor].push({codigo, base, ent, sal, exist, descripcion: p.descripcion});
+  Object.keys(inventario).forEach(cod => {
+    const p = inventario[cod];
+    if (!porProveedor[p.proveedor]) porProveedor[p.proveedor] = [];
+    porProveedor[p.proveedor].push({ codigo: cod, ...p });
   });
 
-  Object.keys(porProveedor).sort().forEach(prov=>{
+  const proveedoresOrdenados = Object.keys(porProveedor).sort();
+
+  proveedoresOrdenados.forEach(prov => {
 
     tabla.innerHTML += `
       <tr>
-        <td colspan="8" style="
-          background: linear-gradient(to right,#00416A,#0c6cbd);
-          color:white; font-size:20px; font-weight:bold;
-        ">
-          ${prov}
+        <td colspan="7" 
+            style="
+              background: linear-gradient(to right, #00416A, #0c6cbd);
+              color: white;
+              font-size:20px;
+              font-weight:bold;
+              padding:14px;
+              border-top: 4px solid #003354;
+            ">
+            ${prov}
         </td>
       </tr>
     `;
 
-    porProveedor[prov].sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    porProveedor[prov].sort((a,b) => a.codigo.localeCompare(b.codigo));
 
-    porProveedor[prov].forEach(item=>{
-      const clase = item.exist < 0 ? "negativo":"positivo";
+    porProveedor[prov].forEach(p => {
+
+      const existencia = p.entradas - p.salidas;
+      const clase = existencia < 0 ? "negativo" : "positivo";
 
       tabla.innerHTML += `
         <tr>
-          <td>${item.codigo}</td>
-          <td>${item.descripcion}</td>
-          <td>${item.base}</td>
-          <td>${item.ent}</td>
-          <td>${item.sal}</td>
-          <td class="${clase}">${item.exist}</td>
+          <td>${p.codigo}</td>
+          <td>${p.descripcion}</td>
+          <td>${p.entradas}</td>
+          <td>${p.salidas}</td>
+          <td class="${clase}">${existencia}</td>
 
           <td>
-            <input type="number" 
-              id="fisico_${item.codigo}"
-              style="width:80px;padding:6px;"
-              oninput="calcularDiferencia('${item.codigo}',${item.exist})">
+            <input type="number"
+                  id="fisico_${p.codigo}"
+                  style="width:80px; padding:6px;"
+                  oninput="calcularDiferencia('${p.codigo}', ${existencia})">
           </td>
 
-          <td id="dif_${item.codigo}" style="font-weight:bold;color:#555;">0</td>
+          <td id="dif_${p.codigo}" style="font-weight:bold; color:#555;">
+            0
+          </td>
         </tr>
       `;
     });
 
-    tabla.innerHTML += `<tr><td colspan="8" style="background:#e6e6e6;height:8px;"></td></tr>`;
+    tabla.innerHTML += `
+      <tr><td colspan="7" style="height:8px; background:#eaeaea;"></td></tr>
+    `;
   });
-
 }
 
-// ===============================
-// 6. CALCULAR DIFERENCIA
-// ===============================
-window.calcularDiferencia = function(codigo, existencia){
-  const fis = Number(document.getElementById("fisico_"+codigo).value);
-  const celda = document.getElementById("dif_"+codigo);
+// ======================================================
+// 5. CALCULAR DIFERENCIA EN VIVO
+// ======================================================
+window.calcularDiferencia = function(codigo, existenciaActual) {
 
-  if(isNaN(fis)){
+  const fisico = Number(document.getElementById("fisico_" + codigo).value);
+  const celda = document.getElementById("dif_" + codigo);
+
+  if (isNaN(fisico)) {
     celda.textContent = "0";
-    celda.style.color="#555";
+    celda.style.color = "#555";
     return;
   }
 
-  const dif = fis - existencia;
-  celda.textContent = dif;
+  const diferencia = fisico - existenciaActual;
 
-  celda.style.color = dif>0?"green": dif<0?"red":"#555";
+  celda.textContent = diferencia;
+
+  if (diferencia > 0) celda.style.color = "green"; 
+  else if (diferencia < 0) celda.style.color = "red";
+  else celda.style.color = "#555";
 };
 
-// ===============================
-// 7. GUARDAR AJUSTES (ENTRADAS/SALIDAS) + ACTUALIZAR BASE
-// ===============================
-async function guardarAjustes(){
+// ======================================================
+// 6. GUARDAR AJUSTES DE INVENTARIO (ENTRADAS/SALIDAS)
+// ======================================================
+async function guardarAjustesInventario() {
 
-  let movimientosEntrada=[];
-  let movimientosSalida=[];
-  let nuevosBases={};
+  let ajustesEntrada = [];
+  let ajustesSalida  = [];
 
-  for(const codigo of Object.keys(productos)){
+  for (const codigo of Object.keys(inventario)) {
+    const p = inventario[codigo];
+    const existencia = p.entradas - p.salidas;
 
-    const base  = inventarioBase[codigo] || 0;
-    const ent   = nuevasEntradas[codigo] || 0;
-    const sal   = nuevasSalidas[codigo] || 0;
-    const exist = base + ent - sal;
+    const input = document.getElementById("fisico_" + codigo);
+    if (!input) continue;
 
-    const input = document.getElementById("fisico_"+codigo);
-    if(!input) continue;
+const valor = input.value.trim();
 
-    const val = input.value.trim();
-    if(val === "") continue;
+// ⛔ SI NO ESCRIBIÓ NADA → NO HACER AJUSTE
+if (valor === "" || valor === null) continue;
 
-    const fis = Number(val);
-    if(isNaN(fis)) continue;
+const fisico = Number(valor);
 
-    const diferencia = fis - exist;
-    if(diferencia === 0) continue;
+// ⛔ SI NO ES UN NÚMERO → ignorar
+if (isNaN(fisico)) continue;
 
-    if(diferencia > 0){
-      movimientosEntrada.push({codigo, cantidad: diferencia});
-    }else{
-      movimientosSalida.push({codigo, cantidad: Math.abs(diferencia)});
+const diferencia = fisico - existencia;
+
+// ⛔ SI NO HAY CAMBIO → ignorar
+if (diferencia === 0) continue;
+
+    if (diferencia > 0) {
+      ajustesEntrada.push({ codigo, cantidad: diferencia });
+    } else {
+      ajustesSalida.push({ codigo, cantidad: Math.abs(diferencia) });
     }
-
-    nuevosBases[codigo] = fis;
   }
 
-  if(movimientosEntrada.length===0 && movimientosSalida.length===0){
-    alert("No hay ajustes por aplicar");
+  if (ajustesEntrada.length === 0 && ajustesSalida.length === 0) {
+    alert("No hay ajustes para guardar.");
     return;
   }
 
   const fecha = new Date();
 
-  if(movimientosEntrada.length>0){
-    await addDoc(collection(db,"almacenes/almacen_zapata/entradas"),{
-      movimiento:"ajuste_inventario",
+  if (ajustesEntrada.length > 0) {
+    await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
+      movimiento: "ajuste_inventario",
       fecha,
-      productos:movimientosEntrada
+      productos: ajustesEntrada
     });
   }
 
-  if(movimientosSalida.length>0){
-    await addDoc(collection(db,"almacenes/almacen_zapata/salidas1.0"),{
-      movimiento:"ajuste_inventario",
-      timestamp:fecha,
-      articulos:movimientosSalida
+  if (ajustesSalida.length > 0) {
+    await addDoc(collection(db, "almacenes/almacen_zapata/salidas1.0"), {
+      movimiento: "ajuste_inventario",
+      timestamp: fecha,
+      articulos: ajustesSalida
     });
   }
 
-  for(const codigo of Object.keys(nuevosBases)){
-    const descripcion = productos[codigo]?.descripcion || "-";
-    const proveedor   = productos[codigo]?.proveedor || "-";
-
-    await setDoc(doc(db,"inventario_base",codigo),{
-      existencia: nuevosBases[codigo],
-      descripcion,
-      proveedor,
-      actualizadoEn: fecha
-    });
-  }
-
-  alert("Ajuste aplicado correctamente");
+  alert("Ajustes aplicados correctamente.");
 }
 
-document.getElementById("btnGuardarAjustes").addEventListener("click",guardarAjustes);
+document.getElementById("btnGuardarAjustes").addEventListener("click", guardarAjustesInventario);
 
-// ===============================
-// EJECUTAR
-// ===============================
-await cargarProductos();
-await cargarBase();
+// ======================================================
+// EJECUCIÓN
+// ======================================================
+await cargarProductosProveedor();
 cargarEntradas();
 cargarSalidas();
 
