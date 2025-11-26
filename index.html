@@ -56,8 +56,9 @@
    <tr>
      <th>Código</th>
      <th>Descripción</th>
-     <th>Entradas</th>
-     <th>Salidas</th>
+     <th>Base</th>
+     <th>Entradas nuevas</th>
+     <th>Salidas nuevas</th>
      <th>Existencia</th>
      <th>Inventario físico</th>
      <th>Diferencia</th>
@@ -71,10 +72,13 @@
 
 <script type="module">
 
+// ---------------------------------------------------------------------
+// FIREBASE
+// ---------------------------------------------------------------------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
-  getFirestore, collection, query, where,
-  getDocs, onSnapshot, addDoc
+  getFirestore, collection, doc, query, where,
+  getDocs, onSnapshot, addDoc, setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -89,308 +93,311 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-const tabla = document.getElementById("tablaInventario");
+// ---------------------------------------------------------------------
+// VARIABLES BASE
+// ---------------------------------------------------------------------
+let productos = {};
+let inventarioBase = {};
+let entradasNuevas = {};
+let salidasNuevas = {};
 
-let inventario = {};     
+let productosListos = false;
+let baseLista = false;
 let entradasListas = false;
-let salidasListas  = false;
+let salidasListas = false;
 
-// ===============================
+// FECHA DE CORTE PARA INVENTARIO
+const fechaCorte = new Date("2025-11-24T00:00:00");
+
+// ---------------------------------------------------------------------
 // NORMALIZADORES
-// ===============================
-function normCodigo(cod) {
+// ---------------------------------------------------------------------
+function normCodigo(cod){
   if (!cod) return "";
-  cod = cod.toString().trim();
-  if (cod.length === 12) return cod;
-  return cod.padStart(12, "0");
+  return cod.toString().trim().padStart(12, "0");
 }
 
-function obtenerCantidad(obj) {
-  return Number(obj.cantidad || 0);
-}
-
-function obtenerCodigo(obj) {
-  return (
-    obj.codigoBarra ||
-    obj.codigobarra ||
-    obj.codigoBarras ||
-    obj.codigo ||
-    obj.productoID ||
-    obj.productoId ||
-    ""
-  ).toString().trim();
-}
-
-// ======================================================
-// 1. LEER SOLO PRODUCTOS ACTIVOS CON PROVEEDOR
-// ======================================================
+// ---------------------------------------------------------------------
+// 1. PRODUCTOS ACTIVOS
+// ---------------------------------------------------------------------
 async function cargarProductosProveedor() {
 
   const q = query(collection(db, "productos"), where("activo", "==", true));
   const snap = await getDocs(q);
 
-  snap.forEach(doc => {
-    const d = doc.data();
+  snap.forEach(docu => {
+    const d = docu.data();
 
-    if (!d.proveedor || d.proveedor.toString().trim() === "") return;
+    if (!d.proveedor || d.proveedor.trim() === "") return;
 
     const codigo = normCodigo(d.codigoBarra || d.codigo || "");
 
-    inventario[codigo] = {
+    productos[codigo] = {
       proveedor: d.proveedor,
-      descripcion: d.concepto || d.descripcion || "-",
-      entradas: 0,
-      salidas: 0
+      descripcion: d.concepto || d.descripcion || "-"
     };
   });
+
+  productosListos = true;
+  intentarDibujar();
 }
 
-// ======================================================
-// 2. PROCESAR ENTRADAS (TIPO 1 Y TIPO 2)
-// ======================================================
-function cargarEntradas() {
+// ---------------------------------------------------------------------
+// 2. INVENTARIO BASE (CONGELADO)
+// ---------------------------------------------------------------------
+async function cargarBase(){
+  const snap = await getDocs(collection(db, "inventario_base"));
+
+  snap.forEach(docu => {
+    const codigo = normCodigo(docu.id);
+    inventarioBase[codigo] = docu.data().existencia || 0;
+  });
+
+  baseLista = true;
+  intentarDibujar();
+}
+
+// ---------------------------------------------------------------------
+// 3. NUEVAS ENTRADAS
+// ---------------------------------------------------------------------
+function cargarEntradas(){
   const ref = collection(db, "almacenes/almacen_zapata/entradas");
 
   onSnapshot(ref, snap => {
+
+    entradasNuevas = {};
+
     snap.forEach(docu => {
       const data = docu.data();
+      const fecha = data.fecha?.toDate?.() || new Date(data.fecha);
 
-      // Entradas tipo 1 (conceptos_detalle)
-      if (Array.isArray(data.conceptos_detalle)) {
-        data.conceptos_detalle.forEach(item => {
-          const codigo = normCodigo(item.codigo || item.productoId || "");
-          const cantidad = Number(item.cantidad || item.cantidadTotal || 0);
-          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
+      if (fecha <= fechaCorte) return;
+
+      if (Array.isArray(data.productos)) {
+        data.productos.forEach(item => {
+          const codigo = normCodigo(item.codigoBarra || item.codigobarras || item.codigo || "");
+          const cant = Number(item.cantidad || 0);
+
+          if (!entradasNuevas[codigo]) entradasNuevas[codigo] = 0;
+          entradasNuevas[codigo] += cant;
         });
       }
 
-      // Entradas tipo 2 (productos)
-      if (Array.isArray(data.productos)) {
-        data.productos.forEach(item => {
-          const codigo = normCodigo(
-            item.codigoBarra ||
-            item.codigobarras ||
-            item.codigo ||
-            item.productoId ||
-            item.productoID ||
-            ""
-          );
-          const cantidad = Number(item.cantidad || 0);
-          if (inventario[codigo]) inventario[codigo].entradas += cantidad;
+      if (Array.isArray(data.conceptos_detalle)) {
+        data.conceptos_detalle.forEach(item => {
+          const codigo = normCodigo(item.codigo || item.productoId || "");
+          const cant = Number(item.cantidad || item.cantidadTotal || 0);
+
+          if (!entradasNuevas[codigo]) entradasNuevas[codigo] = 0;
+          entradasNuevas[codigo] += cant;
         });
       }
 
     });
 
     entradasListas = true;
-    if (entradasListas && salidasListas) dibujar();
+    intentarDibujar();
   });
 }
 
-// ======================================================
-// 3. PROCESAR SALIDAS (CON FECHA MÍNIMA)
-// ======================================================
-
-const fechaMinimaSalidas = new Date("2025-11-24T00:00:00");
-
-function cargarSalidas() {
+// ---------------------------------------------------------------------
+// 4. NUEVAS SALIDAS
+// ---------------------------------------------------------------------
+function cargarSalidas(){
   const ref = collection(db, "almacenes/almacen_zapata/salidas1.0");
 
   onSnapshot(ref, snap => {
 
+    salidasNuevas = {};
+
     snap.forEach(docu => {
       const data = docu.data();
+      const fecha = data.timestamp?.toDate?.() || new Date(data.timestamp);
 
-      if (!data.timestamp) return;
-
-      let fechaSalida;
-
-      if (data.timestamp.toDate) fechaSalida = data.timestamp.toDate();
-      else fechaSalida = new Date(data.timestamp);
-
-      if (fechaSalida < fechaMinimaSalidas) return;
+      if (fecha <= fechaCorte) return;
 
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
+          const codigo = normCodigo(item.codigoBarra || item.codigobarra || item.codigo || "");
+          const cant = Number(item.cantidad || 0);
 
-          const cod = normCodigo(obtenerCodigo(item));
-          const cant = obtenerCantidad(item);
-
-          if (inventario[cod]) {
-            inventario[cod].salidas += cant;
-          }
-
+          if (!salidasNuevas[codigo]) salidasNuevas[codigo] = 0;
+          salidasNuevas[codigo] += cant;
         });
       }
 
     });
 
     salidasListas = true;
-    if (entradasListas && salidasListas) dibujar();
+    intentarDibujar();
   });
 }
 
-// ======================================================
-// 4. DIBUJAR TABLA COMPLETA CON FÍSICO + DIFERENCIA
-// ======================================================
-function dibujar() {
+// ---------------------------------------------------------------------
+// 5. DIBUJAR
+// ---------------------------------------------------------------------
+function intentarDibujar(){
+  if (!productosListos || !baseLista || !entradasListas || !salidasListas) return;
+  dibujar();
+}
+
+function dibujar(){
+  const tabla = document.getElementById("tablaInventario");
   tabla.innerHTML = "";
 
-  const porProveedor = {};
+  let porProveedor = {};
 
-  Object.keys(inventario).forEach(cod => {
-    const p = inventario[cod];
+  Object.keys(productos).forEach(codigo => {
+
+    const p = productos[codigo];
+    const base = inventarioBase[codigo] || 0;
+    const ent = entradasNuevas[codigo] || 0;
+    const sal = salidasNuevas[codigo] || 0;
+    const existencia = base + ent - sal;
+
     if (!porProveedor[p.proveedor]) porProveedor[p.proveedor] = [];
-    porProveedor[p.proveedor].push({ codigo: cod, ...p });
+
+    porProveedor[p.proveedor].push({
+      codigo,
+      descripcion: p.descripcion,
+      base,
+      ent,
+      sal,
+      existencia
+    });
+
   });
 
-  const proveedoresOrdenados = Object.keys(porProveedor).sort();
-
-  proveedoresOrdenados.forEach(prov => {
+  Object.keys(porProveedor).sort().forEach(prov => {
 
     tabla.innerHTML += `
       <tr>
-        <td colspan="7" 
-            style="
-              background: linear-gradient(to right, #00416A, #0c6cbd);
-              color: white;
-              font-size:20px;
-              font-weight:bold;
-              padding:14px;
-              border-top: 4px solid #003354;
-            ">
-            ${prov}
+        <td colspan="8" 
+            style="background:linear-gradient(to right,#00416A,#0c6cbd); color:white; font-size:20px; font-weight:bold;">
+          ${prov}
         </td>
       </tr>
     `;
 
-    porProveedor[prov].sort((a,b) => a.codigo.localeCompare(b.codigo));
+    porProveedor[prov].sort((a,b)=> a.codigo.localeCompare(b.codigo));
 
     porProveedor[prov].forEach(p => {
-
-      const existencia = p.entradas - p.salidas;
-      const clase = existencia < 0 ? "negativo" : "positivo";
 
       tabla.innerHTML += `
         <tr>
           <td>${p.codigo}</td>
           <td>${p.descripcion}</td>
-          <td>${p.entradas}</td>
-          <td>${p.salidas}</td>
-          <td class="${clase}">${existencia}</td>
+          <td>${p.base}</td>
+          <td>${p.ent}</td>
+          <td>${p.sal}</td>
+          <td class="${p.existencia < 0 ? "negativo" : "positivo"}">${p.existencia}</td>
 
           <td>
             <input type="number"
-                  id="fisico_${p.codigo}"
-                  style="width:80px; padding:6px;"
-                  oninput="calcularDiferencia('${p.codigo}', ${existencia})">
+                   id="fisico_${p.codigo}"
+                   style="width:80px;padding:5px;"
+                   oninput="calcularDiferencia('${p.codigo}', ${p.existencia})">
           </td>
 
-          <td id="dif_${p.codigo}" style="font-weight:bold; color:#555;">
-            0
-          </td>
+          <td id="dif_${p.codigo}" style="font-weight:bold; color:#555;">0</td>
         </tr>
       `;
     });
 
     tabla.innerHTML += `
-      <tr><td colspan="7" style="height:8px; background:#eaeaea;"></td></tr>
+      <tr><td colspan="8" style="height:8px;background:#eaeaea;"></td></tr>
     `;
+
   });
+
 }
 
-// ======================================================
-// 5. CALCULAR DIFERENCIA EN VIVO
-// ======================================================
-window.calcularDiferencia = function(codigo, existenciaActual) {
-
-  const fisico = Number(document.getElementById("fisico_" + codigo).value);
-  const celda = document.getElementById("dif_" + codigo);
+// ---------------------------------------------------------------------
+// 6. DIFERENCIA EN VIVO
+// ---------------------------------------------------------------------
+window.calcularDiferencia = function(codigo, existencia){
+  const fisico = Number(document.getElementById("fisico_"+codigo).value);
+  const celda = document.getElementById("dif_"+codigo);
 
   if (isNaN(fisico)) {
-    celda.textContent = "0";
-    celda.style.color = "#555";
-    return;
+    celda.textContent = "0"; celda.style.color="#555"; return;
   }
 
-  const diferencia = fisico - existenciaActual;
+  const dif = fisico - existencia;
+  celda.textContent = dif;
 
-  celda.textContent = diferencia;
-
-  if (diferencia > 0) celda.style.color = "green"; 
-  else if (diferencia < 0) celda.style.color = "red";
-  else celda.style.color = "#555";
+  celda.style.color = dif > 0 ? "green" : dif < 0 ? "red" : "#555";
 };
 
-// ======================================================
-// 6. GUARDAR AJUSTES DE INVENTARIO (ENTRADAS/SALIDAS)
-// ======================================================
-async function guardarAjustesInventario() {
+// ---------------------------------------------------------------------
+// 7. GUARDAR AJUSTES (LÓGICA DE TU CÓDIGO BUENO)
+// ---------------------------------------------------------------------
+async function guardarAjustesInventario(){
 
-  let ajustesEntrada = [];
-  let ajustesSalida  = [];
+  let movimientos = [];
+  let nuevosBases = {};
 
-  for (const codigo of Object.keys(inventario)) {
-    const p = inventario[codigo];
-    const existencia = p.entradas - p.salidas;
+  Object.keys(productos).forEach(codigo => {
 
-    const input = document.getElementById("fisico_" + codigo);
-    if (!input) continue;
+    const base = inventarioBase[codigo] || 0;
+    const ent = entradasNuevas[codigo] || 0;
+    const sal = salidasNuevas[codigo] || 0;
+    const existencia = base + ent - sal;
 
-const valor = input.value.trim();
+    const fis = Number(document.getElementById("fisico_"+codigo)?.value || "");
+    if (isNaN(fis)) return;
 
-// ⛔ SI NO ESCRIBIÓ NADA → NO HACER AJUSTE
-if (valor === "" || valor === null) continue;
+    const dif = fis - existencia;
+    if (dif === 0) return;
 
-const fisico = Number(valor);
+    movimientos.push({
+      codigo,
+      descripcion: productos[codigo].descripcion,
+      cantidad: dif,
+      tipoMovimiento: dif > 0 ? "ENTRADA_AJUSTE" : "SALIDA_AJUSTE"
+    });
 
-// ⛔ SI NO ES UN NÚMERO → ignorar
-if (isNaN(fisico)) continue;
+    nuevosBases[codigo] = fis;
+  });
 
-const diferencia = fisico - existencia;
-
-// ⛔ SI NO HAY CAMBIO → ignorar
-if (diferencia === 0) continue;
-
-    if (diferencia > 0) {
-      ajustesEntrada.push({ codigo, cantidad: diferencia });
-    } else {
-      ajustesSalida.push({ codigo, cantidad: Math.abs(diferencia) });
-    }
-  }
-
-  if (ajustesEntrada.length === 0 && ajustesSalida.length === 0) {
-    alert("No hay ajustes para guardar.");
+  if (movimientos.length === 0){
+    alert("No hay ajustes por aplicar."); 
     return;
   }
 
   const fecha = new Date();
 
-  if (ajustesEntrada.length > 0) {
-    await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
-      movimiento: "ajuste_inventario",
-      fecha,
-      productos: ajustesEntrada
+  // Registrar movimiento AJUSTE
+  await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
+    tipo: "AJUSTE",
+    subTipo: movimientos.some(x => x.tipoMovimiento === "SALIDA_AJUSTE")
+            ? "MIXTO"
+            : "ENTRADA_AJUSTE",
+    fecha,
+    items: movimientos
+  });
+
+  // Actualizar inventario_base
+  for (const codigo of Object.keys(nuevosBases)){
+    await setDoc(doc(db, "inventario_base", codigo), {
+      existencia: nuevosBases[codigo],
+      descripcion: productos[codigo].descripcion,
+      proveedor: productos[codigo].proveedor,
+      actualizadoEn: fecha
     });
   }
 
-  if (ajustesSalida.length > 0) {
-    await addDoc(collection(db, "almacenes/almacen_zapata/salidas1.0"), {
-      movimiento: "ajuste_inventario",
-      timestamp: fecha,
-      articulos: ajustesSalida
-    });
-  }
-
-  alert("Ajustes aplicados correctamente.");
+  alert("✔ Ajuste registrado correctamente.");
 }
 
-document.getElementById("btnGuardarAjustes").addEventListener("click", guardarAjustesInventario);
+document.getElementById("btnGuardarAjustes")
+  .addEventListener("click", guardarAjustesInventario);
 
-// ======================================================
-// EJECUCIÓN
-// ======================================================
+// ---------------------------------------------------------------------
+// EJECUTAR
+// ---------------------------------------------------------------------
 await cargarProductosProveedor();
+await cargarBase();
 cargarEntradas();
 cargarSalidas();
 
