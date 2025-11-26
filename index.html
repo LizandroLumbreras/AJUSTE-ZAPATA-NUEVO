@@ -44,12 +44,17 @@
    font-size:16px; 
    cursor:pointer;
  }
+ .btnBase{
+   background:#0a7d00;
+ }
 </style>
 </head>
 
 <body>
 
 <h2>Inventario Total – Almacén Zapata</h2>
+
+<button id="btnInicializarBase" class="btn btnBase">Inicializar Inventario Base</button>
 
 <table>
 <thead>
@@ -106,19 +111,17 @@ let baseLista = false;
 let entradasListas = false;
 let salidasListas = false;
 
-// FECHA DE CORTE PARA INVENTARIO
+// FECHA CORTE
 const fechaCorte = new Date("2025-11-24T00:00:00");
 
-// ---------------------------------------------------------------------
-// NORMALIZADORES
-// ---------------------------------------------------------------------
+// NORMALIZAR CÓDIGOS
 function normCodigo(cod){
   if (!cod) return "";
   return cod.toString().trim().padStart(12, "0");
 }
 
 // ---------------------------------------------------------------------
-// 1. PRODUCTOS ACTIVOS
+// CARGAR PRODUCTOS ACTIVOS
 // ---------------------------------------------------------------------
 async function cargarProductosProveedor() {
 
@@ -143,10 +146,12 @@ async function cargarProductosProveedor() {
 }
 
 // ---------------------------------------------------------------------
-// 2. INVENTARIO BASE (CONGELADO)
+// CARGAR INVENTARIO BASE CORRECTO
 // ---------------------------------------------------------------------
 async function cargarBase(){
-  const snap = await getDocs(collection(db, "inventario_base"));
+  const snap = await getDocs(
+    collection(db, "almacenes/almacen_zapata/inventario_base")
+  );
 
   snap.forEach(docu => {
     const codigo = normCodigo(docu.id);
@@ -158,7 +163,7 @@ async function cargarBase(){
 }
 
 // ---------------------------------------------------------------------
-// 3. NUEVAS ENTRADAS
+// NUEVAS ENTRADAS
 // ---------------------------------------------------------------------
 function cargarEntradas(){
   const ref = collection(db, "almacenes/almacen_zapata/entradas");
@@ -201,7 +206,7 @@ function cargarEntradas(){
 }
 
 // ---------------------------------------------------------------------
-// 4. NUEVAS SALIDAS
+// NUEVAS SALIDAS
 // ---------------------------------------------------------------------
 function cargarSalidas(){
   const ref = collection(db, "almacenes/almacen_zapata/salidas1.0");
@@ -234,7 +239,7 @@ function cargarSalidas(){
 }
 
 // ---------------------------------------------------------------------
-// 5. DIBUJAR
+// DIBUJAR TABLA
 // ---------------------------------------------------------------------
 function intentarDibujar(){
   if (!productosListos || !baseLista || !entradasListas || !salidasListas) return;
@@ -313,7 +318,7 @@ function dibujar(){
 }
 
 // ---------------------------------------------------------------------
-// 6. DIFERENCIA EN VIVO
+// DIFERENCIA
 // ---------------------------------------------------------------------
 window.calcularDiferencia = function(codigo, existencia){
   const fisico = Number(document.getElementById("fisico_"+codigo).value);
@@ -330,7 +335,7 @@ window.calcularDiferencia = function(codigo, existencia){
 };
 
 // ---------------------------------------------------------------------
-// 7. GUARDAR AJUSTES (LÓGICA DE TU CÓDIGO BUENO)
+// GUARDAR AJUSTES
 // ---------------------------------------------------------------------
 async function guardarAjustesInventario(){
 
@@ -367,7 +372,6 @@ async function guardarAjustesInventario(){
 
   const fecha = new Date();
 
-  // Registrar movimiento AJUSTE
   await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
     tipo: "AJUSTE",
     subTipo: movimientos.some(x => x.tipoMovimiento === "SALIDA_AJUSTE")
@@ -377,21 +381,65 @@ async function guardarAjustesInventario(){
     items: movimientos
   });
 
-  // Actualizar inventario_base
   for (const codigo of Object.keys(nuevosBases)){
-    await setDoc(doc(db, "inventario_base", codigo), {
-      existencia: nuevosBases[codigo],
-      descripcion: productos[codigo].descripcion,
-      proveedor: productos[codigo].proveedor,
-      actualizadoEn: fecha
-    });
+    await setDoc(
+      doc(db, "almacenes/almacen_zapata/inventario_base", codigo),
+      {
+        existencia: nuevosBases[codigo],
+        descripcion: productos[codigo].descripcion,
+        proveedor: productos[codigo].proveedor,
+        actualizadoEn: fecha
+      }
+    );
   }
 
   alert("✔ Ajuste registrado correctamente.");
 }
 
+// ---------------------------------------------------------------------
+// INICIALIZAR INVENTARIO BASE (SOLO 1 VEZ)
+// ---------------------------------------------------------------------
+async function inicializarInventarioBase() {
+
+  if (!confirm("¿Seguro que deseas crear el inventario base inicial?\nSOLO se debe ejecutar UNA VEZ.")) {
+    return;
+  }
+
+  const fecha = new Date();
+  let totalGuardados = 0;
+
+  for (const codigo of Object.keys(productos)) {
+
+    const baseActual = inventarioBase[codigo] || 0;
+    const entradas = entradasNuevas[codigo] || 0;
+    const salidas  = salidasNuevas[codigo] || 0;
+
+    const existencia = baseActual + entradas - salidas;
+
+    await setDoc(
+      doc(db, "almacenes/almacen_zapata/inventario_base", codigo),
+      {
+        existencia: existencia,
+        descripcion: productos[codigo].descripcion,
+        proveedor: productos[codigo].proveedor,
+        actualizadoEn: fecha
+      }
+    );
+
+    totalGuardados++;
+  }
+
+  alert("✔ Inventario base creado para " + totalGuardados + " productos.\nYa puedes empezar a usar ajustes de inventario.");
+}
+
+// ---------------------------------------------------------------------
+// EVENTOS
+// ---------------------------------------------------------------------
 document.getElementById("btnGuardarAjustes")
   .addEventListener("click", guardarAjustesInventario);
+
+document.getElementById("btnInicializarBase")
+  .addEventListener("click", inicializarInventarioBase);
 
 // ---------------------------------------------------------------------
 // EJECUTAR
