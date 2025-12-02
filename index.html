@@ -111,8 +111,8 @@ let baseLista = false;
 let entradasListas = false;
 let salidasListas = false;
 
-// FECHA CORTE
-const fechaCorte = new Date("2025-11-24T00:00:00");
+// Un día antes del corte real
+const fechaCorte = new Date("2025-11-23T23:59:59");
 
 // NORMALIZAR CÓDIGOS
 function normCodigo(cod){
@@ -176,7 +176,7 @@ function cargarEntradas(){
       const data = docu.data();
       const fecha = data.fecha?.toDate?.() || new Date(data.fecha);
 
-      if (fecha <= fechaCorte) return;
+      if (fecha < fechaCorte) return;
 
       if (Array.isArray(data.productos)) {
         data.productos.forEach(item => {
@@ -219,7 +219,7 @@ function cargarSalidas(){
       const data = docu.data();
       const fecha = data.timestamp?.toDate?.() || new Date(data.timestamp);
 
-      if (fecha <= fechaCorte) return;
+      if (fecha < fechaCorte) return;
 
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
