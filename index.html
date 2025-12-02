@@ -153,10 +153,18 @@ async function cargarBase(){
     collection(db, "almacenes/almacen_zapata/inventario_base")
   );
 
+  let hayBase = false;
+
   snap.forEach(docu => {
+    hayBase = true;
     const codigo = normCodigo(docu.id);
     inventarioBase[codigo] = docu.data().existencia || 0;
   });
+
+  // 🔥 Si ya existe base, ocultar botón para evitar que destruyan todo
+  if (hayBase){
+    document.getElementById("btnInicializarBase").style.display = "none";
+  }
 
   baseLista = true;
   intentarDibujar();
