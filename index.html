@@ -83,7 +83,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
   getFirestore, collection, doc, query, where,
-  getDocs, onSnapshot, addDoc, setDoc
+  getDocs, onSnapshot, addDoc, setDoc, deleteDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -111,7 +111,6 @@ let baseLista = false;
 let entradasListas = false;
 let salidasListas = false;
 
-// FECHA CORTE
 const fechaCorte = new Date("2025-11-24T00:00:00");
 
 // NORMALIZAR CÓDIGOS
@@ -146,7 +145,7 @@ async function cargarProductosProveedor() {
 }
 
 // ---------------------------------------------------------------------
-// CARGAR INVENTARIO BASE CORRECTO
+// CARGAR INVENTARIO BASE
 // ---------------------------------------------------------------------
 async function cargarBase(){
   const snap = await getDocs(
@@ -176,15 +175,13 @@ function cargarEntradas(){
       const data = docu.data();
       const fecha = data.fecha?.toDate?.() || new Date(data.fecha);
 
-      if (fecha <= fechaCorte) return;
+      if (fecha < fechaCorte) return;
 
       if (Array.isArray(data.productos)) {
         data.productos.forEach(item => {
           const codigo = normCodigo(item.codigoBarra || item.codigobarras || item.codigo || "");
           const cant = Number(item.cantidad || 0);
-
-          if (!entradasNuevas[codigo]) entradasNuevas[codigo] = 0;
-          entradasNuevas[codigo] += cant;
+          entradasNuevas[codigo] = (entradasNuevas[codigo] || 0) + cant;
         });
       }
 
@@ -192,9 +189,7 @@ function cargarEntradas(){
         data.conceptos_detalle.forEach(item => {
           const codigo = normCodigo(item.codigo || item.productoId || "");
           const cant = Number(item.cantidad || item.cantidadTotal || 0);
-
-          if (!entradasNuevas[codigo]) entradasNuevas[codigo] = 0;
-          entradasNuevas[codigo] += cant;
+          entradasNuevas[codigo] = (entradasNuevas[codigo] || 0) + cant;
         });
       }
 
@@ -219,15 +214,13 @@ function cargarSalidas(){
       const data = docu.data();
       const fecha = data.timestamp?.toDate?.() || new Date(data.timestamp);
 
-      if (fecha <= fechaCorte) return;
+      if (fecha < fechaCorte) return;
 
       if (Array.isArray(data.articulos)) {
         data.articulos.forEach(item => {
           const codigo = normCodigo(item.codigoBarra || item.codigobarra || item.codigo || "");
           const cant = Number(item.cantidad || 0);
-
-          if (!salidasNuevas[codigo]) salidasNuevas[codigo] = 0;
-          salidasNuevas[codigo] += cant;
+          salidasNuevas[codigo] = (salidasNuevas[codigo] || 0) + cant;
         });
       }
 
@@ -335,7 +328,7 @@ window.calcularDiferencia = function(codigo, existencia){
 };
 
 // ---------------------------------------------------------------------
-// GUARDAR AJUSTES
+// GUARDAR AJUSTES (CORREGIDO)
 // ---------------------------------------------------------------------
 async function guardarAjustesInventario(){
 
@@ -349,7 +342,8 @@ async function guardarAjustesInventario(){
     const sal = salidasNuevas[codigo] || 0;
     const existencia = base + ent - sal;
 
-    const fis = Number(document.getElementById("fisico_"+codigo)?.value || "");
+    const fis = Number(document.getElementById("fisico_"+codigo)?.value);
+
     if (isNaN(fis)) return;
 
     const dif = fis - existencia;
@@ -358,7 +352,7 @@ async function guardarAjustesInventario(){
     movimientos.push({
       codigo,
       descripcion: productos[codigo].descripcion,
-      cantidad: dif,
+      cantidad: Math.abs(dif), // ← CORREGIDO
       tipoMovimiento: dif > 0 ? "ENTRADA_AJUSTE" : "SALIDA_AJUSTE"
     });
 
@@ -372,15 +366,13 @@ async function guardarAjustesInventario(){
 
   const fecha = new Date();
 
-  await addDoc(collection(db, "almacenes/almacen_zapata/entradas"), {
-    tipo: "AJUSTE",
-    subTipo: movimientos.some(x => x.tipoMovimiento === "SALIDA_AJUSTE")
-            ? "MIXTO"
-            : "ENTRADA_AJUSTE",
+  // GUARDAR EN COLECCIÓN CORRECTA
+  await addDoc(collection(db, "almacenes/almacen_zapata/ajustes"), {
     fecha,
-    items: movimientos
+    movimientos
   });
 
+  // ACTUALIZAR INVENTARIO BASE
   for (const codigo of Object.keys(nuevosBases)){
     await setDoc(
       doc(db, "almacenes/almacen_zapata/inventario_base", codigo),
@@ -397,29 +389,32 @@ async function guardarAjustesInventario(){
 }
 
 // ---------------------------------------------------------------------
-// INICIALIZAR INVENTARIO BASE (SOLO 1 VEZ)
+// INICIALIZAR INVENTARIO BASE (REINICIA BASE)
 // ---------------------------------------------------------------------
 async function inicializarInventarioBase() {
 
-  if (!confirm("¿Seguro que deseas crear el inventario base inicial?\nSOLO se debe ejecutar UNA VEZ.")) {
+  if (!confirm("¿Seguro que deseas CREAR el inventario base desde cero?")) {
     return;
   }
+
+  // BORRAR BASE ANTERIOR
+  const snap = await getDocs(collection(db, "almacenes/almacen_zapata/inventario_base"));
+  snap.forEach(d => deleteDoc(doc(db, "almacenes/almacen_zapata/inventario_base", d.id)));
 
   const fecha = new Date();
   let totalGuardados = 0;
 
   for (const codigo of Object.keys(productos)) {
 
-    const baseActual = inventarioBase[codigo] || 0;
-    const entradas = entradasNuevas[codigo] || 0;
-    const salidas  = salidasNuevas[codigo] || 0;
+    const ent = entradasNuevas[codigo] || 0;
+    const sal = salidasNuevas[codigo] || 0;
 
-    const existencia = baseActual + entradas - salidas;
+    const existencia = ent - sal;
 
     await setDoc(
       doc(db, "almacenes/almacen_zapata/inventario_base", codigo),
       {
-        existencia: existencia,
+        existencia,
         descripcion: productos[codigo].descripcion,
         proveedor: productos[codigo].proveedor,
         actualizadoEn: fecha
@@ -429,7 +424,7 @@ async function inicializarInventarioBase() {
     totalGuardados++;
   }
 
-  alert("✔ Inventario base creado para " + totalGuardados + " productos.\nYa puedes empezar a usar ajustes de inventario.");
+  alert("✔ Inventario base creado para " + totalGuardados + " productos.");
 }
 
 // ---------------------------------------------------------------------
@@ -450,6 +445,5 @@ cargarEntradas();
 cargarSalidas();
 
 </script>
-
 </body>
 </html>
