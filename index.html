@@ -101,8 +101,7 @@ function norm(c){
 // 1. PRODUCTOS
 // ----------------------------------------------------------
 async function cargarProductos(){
-  const q = query(collection(db,"productos"), where("activo","==",true));
-  const snap = await getDocs(q);
+  const snap = await getDocs(collection(db,"productos"));
 
   snap.forEach(d=>{
     const x = d.data();
@@ -163,7 +162,7 @@ function cargarSalidas(){
 }
 
 // ----------------------------------------------------------
-// DIBUJAR
+// DIBUJAR (solo productos con movimientos)
 // ----------------------------------------------------------
 function intentar(){
   if(!listos.productos || !listos.entradas || !listos.salidas) return;
@@ -174,15 +173,23 @@ function dibujar(){
   const t = document.getElementById("tablaInventario");
   t.innerHTML = "";
 
-  Object.keys(productos).forEach(codigo=>{
+  // Obtener lista de códigos que sí tuvieron movimientos
+  const codigos = new Set([
+    ...Object.keys(entradas),
+    ...Object.keys(salidas)
+  ]);
+
+  codigos.forEach(codigo=>{
     const ent = entradas[codigo] || 0;
     const sal = salidas[codigo] || 0;
     const dif = ent - sal;
 
+    const desc = productos[codigo]?.descripcion || "-";
+
     t.innerHTML += `
       <tr>
         <td>${codigo}</td>
-        <td>${productos[codigo].descripcion}</td>
+        <td>${desc}</td>
         <td>${ent}</td>
         <td>${sal}</td>
         <td class="${dif<0?'negativo':'positivo'}">${dif}</td>
@@ -192,7 +199,7 @@ function dibujar(){
 }
 
 // ----------------------------------------------------------
-// EJECUTAR
+// INICIAR
 // ----------------------------------------------------------
 await cargarProductos();
 cargarEntradas();
