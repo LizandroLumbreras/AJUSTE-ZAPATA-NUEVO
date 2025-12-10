@@ -14,26 +14,14 @@ body{
 h2{
   color:#00416A;
   font-size:28px;
+  margin-bottom:20px;
   text-align:center;
-  margin-bottom:20px;
-}
-#btnGuardarTodo{
-  background:#0077cc;
-  color:white;
-  padding:12px 25px;
-  font-size:16px;
-  border:none;
-  border-radius:8px;
-  cursor:pointer;
-  margin-bottom:20px;
-}
-#btnGuardarTodo:hover{
-  background:#005fa3;
 }
 table{
   width:100%;
   border-collapse:collapse;
   background:white;
+  margin-top:10px;
 }
 th,td{
   border:1px solid #ccc;
@@ -54,6 +42,17 @@ input[type='number']{
   border-radius:5px;
   border:1px solid #aaa;
 }
+button{
+  padding:5px 10px;
+  background:#00416A;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+button:hover{
+  background:#006199;
+}
 .proveedor-row{
   background:#d9e7f5;
   font-weight:bold;
@@ -65,8 +64,6 @@ input[type='number']{
 
 <h2>Inventario Real – Almacén Zapata</h2>
 
-<button id="btnGuardarTodo">GUARDAR AJUSTES</button>
-
 <table>
 <thead>
 <tr>
@@ -76,9 +73,10 @@ input[type='number']{
   <th>Entradas</th>
   <th>Salidas</th>
   <th>Inventario Real</th>
-  <th>Ajustar Inventario</th>
+  <th>Ajustar Inicial</th>
 </tr>
 </thead>
+
 <tbody id="tablaInventario"></tbody>
 </table>
 
@@ -111,7 +109,6 @@ let productos = {};
 let entradas = {};
 let salidas = {};
 let iniciales = {};
-let originales = {}; // Para detectar cambios
 
 let listos = {
   productos:false,
@@ -121,7 +118,7 @@ let listos = {
 };
 
 function norm(c){ 
-  return (c || "").toString().trim().padStart(12,"0"); 
+  return (c||"").toString().trim().padStart(12,"0"); 
 }
 
 // --------------------------------------------------------------
@@ -129,7 +126,6 @@ function norm(c){
 // --------------------------------------------------------------
 async function cargarProductos(){
   const snap = await getDocs(collection(db,"productos"));
-
   snap.forEach(d=>{
     const x = d.data();
     const codigo = norm(x.codigoBarra || x.codigo);
@@ -146,23 +142,26 @@ async function cargarProductos(){
 }
 
 // --------------------------------------------------------------
-// 2. CARGAR ENTRADAS
+// 2. CARGAR ENTRADAS (conceptos_detalle)
 // --------------------------------------------------------------
 function cargarEntradas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/entradas"), snap=>{
+    
     entradas = {};
 
     snap.forEach(docu=>{
       const x = docu.data();
 
+      // ENTRADAS reales
       if (Array.isArray(x.conceptos_detalle)) {
-        x.conceptos_detalle.forEach(item=>{
-          const codigo = norm(item.codigo || item.productoId);
+        x.conceptos_detalle.forEach(item => {
+          const codigo = norm(item.codigo || item.productoId || item.noIdentificacion);
           const cant = Number(item.cantidad || 0);
           entradas[codigo] = (entradas[codigo] || 0) + cant;
         });
       }
 
+      // Compatibilidad con versiones anteriores
       if (Array.isArray(x.productos)) {
         x.productos.forEach(item=>{
           const codigo = norm(item.codigoBarra || item.codigo);
@@ -179,7 +178,7 @@ function cargarEntradas(){
 }
 
 // --------------------------------------------------------------
-// 3. CARGAR SALIDAS
+// 3. CARGAR SALIDAS (salidas1.0 → articulos[])
 // --------------------------------------------------------------
 function cargarSalidas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/salidas1.0"), snap=>{
@@ -190,7 +189,7 @@ function cargarSalidas(){
       const x = docu.data();
 
       if (Array.isArray(x.articulos)) {
-        x.articulos.forEach(item=>{
+        x.articulos.forEach(item => {
           const codigo = norm(item.codigo);
           const cant = Number(item.cantidad || 0);
           salidas[codigo] = (salidas[codigo] || 0) + cant;
@@ -205,7 +204,7 @@ function cargarSalidas(){
 }
 
 // --------------------------------------------------------------
-// 4. CARGAR INVENTARIO INICIAL
+// 4. CARGAR INVENTARIO INICIAL / AJUSTES
 // --------------------------------------------------------------
 function cargarIniciales(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/ajustes"), snap=>{
@@ -220,52 +219,64 @@ function cargarIniciales(){
 }
 
 // --------------------------------------------------------------
-// DIBUJAR TABLA
+// INTENTAR DIBUJAR
 // --------------------------------------------------------------
 function intentar(){
   if(!listos.productos || !listos.entradas || !listos.salidas || !listos.iniciales) return;
   dibujar();
 }
 
+// --------------------------------------------------------------
+// 5. DIBUJAR INVENTARIO ORDENADO POR PROVEEDOR
+// --------------------------------------------------------------
 function dibujar(){
   const t = document.getElementById("tablaInventario");
   t.innerHTML = "";
 
-  const grupos = {};
+  const grupos = {}; // proveedor : [productos]
 
+  // SOLO mostrar productos que APARECEN EN SALIDAS
   const codigos = new Set(Object.keys(salidas));
-
-  originales = {}; // limpiar históricos
 
   codigos.forEach(codigo=>{
     const prod = productos[codigo];
-    if (!prod) return;
-    if (!prod.proveedor) return;
-    if (!prod.activo) return;
 
-    const desc = prod.descripcion;
+    // Si no existe el producto → excluir
+    if (!prod) return;
+
+    // Si NO tiene proveedor → excluir
+    if (!prod.proveedor) return;
+
+    // Si NO está activo → excluir
+    if (prod.activo !== true) return;
+
+    const desc = prod.descripcion || "-";
     const proveedor = prod.proveedor;
 
-    const ini = iniciales[codigo] || 0;
-    const ent = entradas[codigo] || 0;
-    const sal = salidas[codigo] || 0;
+    const ini  = iniciales[codigo] || 0;
+    const ent  = entradas[codigo] || 0;
+    const sal  = salidas[codigo] || 0;
 
     const real = ini + ent - sal;
 
     if(!grupos[proveedor]) grupos[proveedor] = [];
 
     grupos[proveedor].push({
-      codigo, descripcion: desc,
-      ini, ent, sal, real
+      codigo,
+      descripcion: desc,
+      ini,
+      ent,
+      sal,
+      real
     });
-
-    originales[codigo] = real; // guardar valor original para detectar cambios
   });
 
+  // ORDENAR proveedores alfabéticamente
   const proveedoresOrdenados = Object.keys(grupos).sort();
 
-  proveedoresOrdenados.forEach(proveedor=>{
+  proveedoresOrdenados.forEach(proveedor => {
 
+    // Fila de proveedor
     t.innerHTML += `
       <tr class="proveedor-row">
         <td colspan="7" style="text-align:left;padding:10px;font-size:15px;">
@@ -274,8 +285,10 @@ function dibujar(){
       </tr>
     `;
 
+    // Orden interno por descripción
     grupos[proveedor].sort((a,b)=> a.descripcion.localeCompare(b.descripcion));
 
+    // Render de productos
     grupos[proveedor].forEach(item=>{
       t.innerHTML += `
         <tr>
@@ -287,54 +300,34 @@ function dibujar(){
           <td class="${item.real<0?'negativo':'positivo'}">${item.real}</td>
 
           <td>
-            <input type="number" id="aj_${item.codigo}" value="${item.real}">
+            <input type="number" id="aj_${item.codigo}" value="${item.ini}">
+            <button onclick="guardarAjuste('${item.codigo}')">Guardar</button>
           </td>
         </tr>
       `;
     });
+
   });
+
 }
 
 // --------------------------------------------------------------
-// GUARDAR SOLO LO MODIFICADO
+// 6. GUARDAR AJUSTE DE INVENTARIO
 // --------------------------------------------------------------
-document.getElementById("btnGuardarTodo").addEventListener("click", async ()=>{
+window.guardarAjuste = async function(codigo){
+  const v = Number(document.getElementById("aj_"+codigo).value || 0);
 
-  let cambios = 0;
+  await setDoc(doc(db,"almacenes/almacen_zapata/ajustes",codigo),{
+    codigo,
+    inventarioInicial: v,
+    lastUpdate: new Date().toISOString()
+  });
 
-  for (const codigo of Object.keys(originales)) {
-
-    const input = document.getElementById("aj_" + codigo);
-    if (!input) continue;
-
-    const nuevoReal = Number(input.value);
-    const realOriginal = originales[codigo];
-
-    // Si hubo cambio (incluye ceros)
-    if (nuevoReal !== realOriginal) {
-
-      const ent = entradas[codigo] || 0;
-      const sal = salidas[codigo] || 0;
-
-      // calcular nuevo inicial
-      const nuevoInicial = nuevoReal - ent + sal;
-
-      await setDoc(doc(db, "almacenes/almacen_zapata/ajustes", codigo), {
-        codigo,
-        inventarioInicial: nuevoInicial,
-        lastUpdate: new Date().toISOString()
-      });
-
-      cambios++;
-    }
-  }
-
-  alert("Cambios guardados correctamente: " + cambios);
-});
-
+  alert("Inventario inicial actualizado.");
+};
 
 // --------------------------------------------------------------
-// INICIO
+// INICIAR
 // --------------------------------------------------------------
 cargarProductos();
 cargarEntradas();
