@@ -117,21 +117,26 @@ let listos = {
   iniciales:false
 };
 
-function norm(c){ return (c||"").toString().trim().padStart(12,"0"); }
+function norm(c){ 
+  return (c||"").toString().trim().padStart(12,"0"); 
+}
 
 // --------------------------------------------------------------
-// 1. CARGAR PRODUCTOS (Para: proveedor + descripción)
+// 1. CARGAR PRODUCTOS
 // --------------------------------------------------------------
 async function cargarProductos(){
   const snap = await getDocs(collection(db,"productos"));
   snap.forEach(d=>{
     const x = d.data();
     const codigo = norm(x.codigoBarra || x.codigo);
+
     productos[codigo] = {
       descripcion: x.concepto || x.descripcion || "-",
-      proveedor: x.proveedor || "SIN PROVEEDOR"
+      proveedor: x.proveedor || null,
+      activo: x.activo === true
     };
   });
+
   listos.productos = true;
   intentar();
 }
@@ -147,7 +152,7 @@ function cargarEntradas(){
     snap.forEach(docu=>{
       const x = docu.data();
 
-      // ENTRADAS REALES (conceptos_detalle)
+      // ENTRADAS reales
       if (Array.isArray(x.conceptos_detalle)) {
         x.conceptos_detalle.forEach(item => {
           const codigo = norm(item.codigo || item.productoId || item.noIdentificacion);
@@ -156,7 +161,7 @@ function cargarEntradas(){
         });
       }
 
-      // COMPATIBILIDAD CON VERSIONES ANTIGUAS
+      // Compatibilidad con versiones anteriores
       if (Array.isArray(x.productos)) {
         x.productos.forEach(item=>{
           const codigo = norm(item.codigoBarra || item.codigo);
@@ -222,26 +227,32 @@ function intentar(){
 }
 
 // --------------------------------------------------------------
-// DIBUJAR INVENTARIO ORDENADO POR PROVEEDOR
+// 5. DIBUJAR INVENTARIO ORDENADO POR PROVEEDOR
 // --------------------------------------------------------------
 function dibujar(){
   const t = document.getElementById("tablaInventario");
   t.innerHTML = "";
 
-  const grupos = {}; // proveedor: [productos]
+  const grupos = {}; // proveedor : [productos]
 
-  const codigos = new Set([
-    ...Object.keys(productos),
-    ...Object.keys(entradas),
-    ...Object.keys(salidas),
-    ...Object.keys(iniciales)
-  ]);
+  // SOLO mostrar productos que APARECEN EN SALIDAS
+  const codigos = new Set(Object.keys(salidas));
 
   codigos.forEach(codigo=>{
-    const prod = productos[codigo] || {};
-    const proveedor = prod.proveedor || "SIN PROVEEDOR";
+    const prod = productos[codigo];
+
+    // Si no existe el producto → excluir
+    if (!prod) return;
+
+    // Si NO tiene proveedor → excluir
+    if (!prod.proveedor) return;
+
+    // Si NO está activo → excluir
+    if (prod.activo !== true) return;
 
     const desc = prod.descripcion || "-";
+    const proveedor = prod.proveedor;
+
     const ini  = iniciales[codigo] || 0;
     const ent  = entradas[codigo] || 0;
     const sal  = salidas[codigo] || 0;
@@ -260,12 +271,12 @@ function dibujar(){
     });
   });
 
-  // ORDENAR PROVEEDORES
+  // ORDENAR proveedores alfabéticamente
   const proveedoresOrdenados = Object.keys(grupos).sort();
 
   proveedoresOrdenados.forEach(proveedor => {
 
-    // FILA DE TÍTULO DEL PROVEEDOR
+    // Fila de proveedor
     t.innerHTML += `
       <tr class="proveedor-row">
         <td colspan="7" style="text-align:left;padding:10px;font-size:15px;">
@@ -274,10 +285,10 @@ function dibujar(){
       </tr>
     `;
 
-    // ORDENAR PRODUCTOS DEL PROVEEDOR POR DESCRIPCIÓN
+    // Orden interno por descripción
     grupos[proveedor].sort((a,b)=> a.descripcion.localeCompare(b.descripcion));
 
-    // AGREGAR PRODUCTOS
+    // Render de productos
     grupos[proveedor].forEach(item=>{
       t.innerHTML += `
         <tr>
@@ -301,7 +312,7 @@ function dibujar(){
 }
 
 // --------------------------------------------------------------
-// GUARDAR AJUSTE DE INVENTARIO
+// 6. GUARDAR AJUSTE DE INVENTARIO
 // --------------------------------------------------------------
 window.guardarAjuste = async function(codigo){
   const v = Number(document.getElementById("aj_"+codigo).value || 0);
