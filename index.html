@@ -17,6 +17,19 @@ h2{
   text-align:center;
   margin-bottom:20px;
 }
+#btnGuardarTodo{
+  background:#0077cc;
+  color:white;
+  padding:12px 25px;
+  font-size:16px;
+  border:none;
+  border-radius:8px;
+  cursor:pointer;
+  margin-bottom:20px;
+}
+#btnGuardarTodo:hover{
+  background:#005fa3;
+}
 table{
   width:100%;
   border-collapse:collapse;
@@ -41,17 +54,6 @@ input[type='number']{
   border-radius:5px;
   border:1px solid #aaa;
 }
-button{
-  padding:5px 10px;
-  background:#00416A;
-  color:white;
-  border:none;
-  border-radius:6px;
-  cursor:pointer;
-}
-button:hover{
-  background:#006199;
-}
 .proveedor-row{
   background:#d9e7f5;
   font-weight:bold;
@@ -62,6 +64,8 @@ button:hover{
 <body>
 
 <h2>Inventario Real – Almacén Zapata</h2>
+
+<button id="btnGuardarTodo">GUARDAR AJUSTES</button>
 
 <table>
 <thead>
@@ -107,6 +111,7 @@ let productos = {};
 let entradas = {};
 let salidas = {};
 let iniciales = {};
+let originales = {}; // Para detectar cambios
 
 let listos = {
   productos:false,
@@ -215,7 +220,7 @@ function cargarIniciales(){
 }
 
 // --------------------------------------------------------------
-// DIBUJAR TABLA AGRUPADA POR PROVEEDOR
+// DIBUJAR TABLA
 // --------------------------------------------------------------
 function intentar(){
   if(!listos.productos || !listos.entradas || !listos.salidas || !listos.iniciales) return;
@@ -228,15 +233,15 @@ function dibujar(){
 
   const grupos = {};
 
-  // SOLO productos que tengan salidas
   const codigos = new Set(Object.keys(salidas));
+
+  originales = {}; // limpiar históricos
 
   codigos.forEach(codigo=>{
     const prod = productos[codigo];
-
-    if (!prod) return;           // no existe producto
-    if (!prod.proveedor) return; // sin proveedor
-    if (!prod.activo) return;    // inactivo
+    if (!prod) return;
+    if (!prod.proveedor) return;
+    if (!prod.activo) return;
 
     const desc = prod.descripcion;
     const proveedor = prod.proveedor;
@@ -253,6 +258,8 @@ function dibujar(){
       codigo, descripcion: desc,
       ini, ent, sal, real
     });
+
+    originales[codigo] = real; // guardar valor original para detectar cambios
   });
 
   const proveedoresOrdenados = Object.keys(grupos).sort();
@@ -281,7 +288,6 @@ function dibujar(){
 
           <td>
             <input type="number" id="aj_${item.codigo}" value="${item.real}">
-            <button onclick="guardarAjuste('${item.codigo}')">Guardar</button>
           </td>
         </tr>
       `;
@@ -290,29 +296,42 @@ function dibujar(){
 }
 
 // --------------------------------------------------------------
-// AJUSTAR INVENTARIO REAL → CALCULA NUEVO INVENTARIO INICIAL
+// GUARDAR SOLO LO MODIFICADO
 // --------------------------------------------------------------
-window.guardarAjuste = async function(codigo){
+document.getElementById("btnGuardarTodo").addEventListener("click", async ()=>{
 
-  const valorDeseado = Number(document.getElementById("aj_" + codigo).value || 0);
+  let cambios = 0;
 
-  const ent = entradas[codigo] || 0;
-  const sal = salidas[codigo] || 0;
+  for (const codigo of Object.keys(originales)) {
 
-  // Fórmula:
-  const nuevoInicial = valorDeseado - ent + sal;
+    const input = document.getElementById("aj_" + codigo);
+    if (!input) continue;
 
-  await setDoc(doc(db, "almacenes/almacen_zapata/ajustes", codigo), {
-    codigo,
-    inventarioInicial: nuevoInicial,
-    lastUpdate: new Date().toISOString()
-  });
+    const nuevoReal = Number(input.value);
+    const realOriginal = originales[codigo];
 
-  alert("Inventario actualizado correctamente.");
+    // Si hubo cambio (incluye ceros)
+    if (nuevoReal !== realOriginal) {
 
-  iniciales[codigo] = nuevoInicial;
-  intentar();
-};
+      const ent = entradas[codigo] || 0;
+      const sal = salidas[codigo] || 0;
+
+      // calcular nuevo inicial
+      const nuevoInicial = nuevoReal - ent + sal;
+
+      await setDoc(doc(db, "almacenes/almacen_zapata/ajustes", codigo), {
+        codigo,
+        inventarioInicial: nuevoInicial,
+        lastUpdate: new Date().toISOString()
+      });
+
+      cambios++;
+    }
+  }
+
+  alert("Cambios guardados correctamente: " + cambios);
+});
+
 
 // --------------------------------------------------------------
 // INICIO
