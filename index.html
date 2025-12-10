@@ -125,7 +125,7 @@ function norm(c){
 }
 
 // --------------------------------------------------------------
-// 1. CARGAR PRODUCTOS
+// 1. CARGAR PRODUCTOS (base principal)
 // --------------------------------------------------------------
 async function cargarProductos(){
   const snap = await getDocs(collection(db,"productos"));
@@ -146,7 +146,7 @@ async function cargarProductos(){
 }
 
 // --------------------------------------------------------------
-// 2. CARGAR ENTRADAS (conceptos_detalle y productos[])
+// 2. CARGAR ENTRADAS
 // --------------------------------------------------------------
 function cargarEntradas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/entradas"), snap=>{
@@ -179,7 +179,7 @@ function cargarEntradas(){
 }
 
 // --------------------------------------------------------------
-// 3. CARGAR SALIDAS (articulos[] de salidas1.0)
+// 3. CARGAR SALIDAS
 // --------------------------------------------------------------
 function cargarSalidas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/salidas1.0"), snap=>{
@@ -205,14 +205,16 @@ function cargarSalidas(){
 }
 
 // --------------------------------------------------------------
-// 4. CARGAR INVENTARIO INICIAL
+// 4. CARGAR INVENTARIO INICIAL (CORREGIDO)
 // --------------------------------------------------------------
 function cargarIniciales(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/ajustes"), snap=>{
     iniciales = {};
+
     snap.forEach(d=>{
       const x = d.data();
-      iniciales[norm(x.codigo)] = Number(x.inventarioInicial || 0);
+      const codNorm = norm(d.id);   // ← CORREGIDO: leer ID real
+      iniciales[codNorm] = Number(x.inventarioInicial || 0);
     });
 
     listos.iniciales = true;
@@ -221,7 +223,7 @@ function cargarIniciales(){
 }
 
 // --------------------------------------------------------------
-// 5. DIBUJAR TABLA (TODOS ACTIVOS CON PROVEEDOR)
+// 5. DIBUJAR TABLA (solo activos con proveedor)
 // --------------------------------------------------------------
 function intentar(){
   if(!listos.productos || !listos.entradas || !listos.salidas || !listos.iniciales) return;
@@ -235,14 +237,14 @@ function dibujar(){
   const grupos = {};
   originales = {};
 
-  const codigos = Object.keys(productos); // NUEVO → TODOS LOS PRODUCTOS
+  const codigos = Object.keys(productos);
 
   codigos.forEach(codigo=>{
     const prod = productos[codigo];
 
     if (!prod) return;
     if (!prod.activo) return;       // solo activos
-    if (!prod.proveedor) return;    // debe tener proveedor
+    if (!prod.proveedor) return;    // solo productos con proveedor
 
     const desc = prod.descripcion;
     const proveedor = prod.proveedor;
@@ -295,13 +297,16 @@ function dibujar(){
 }
 
 // --------------------------------------------------------------
-// 6. GUARDAR SOLO CAMBIOS MODIFICADOS
+// 6. GUARDAR AJUSTES (CORREGIDO CON norm(d.id))
 // --------------------------------------------------------------
 document.getElementById("btnGuardarTodo").addEventListener("click", async ()=>{
 
   let cambios = 0;
 
   for (const codigo of Object.keys(originales)) {
+
+    const codNorm = norm(codigo);
+
     const input = document.getElementById("aj_" + codigo);
     if (!input) continue;
 
@@ -310,13 +315,13 @@ document.getElementById("btnGuardarTodo").addEventListener("click", async ()=>{
 
     if (nuevoReal !== realOriginal) {
 
-      const ent = entradas[codigo] || 0;
-      const sal = salidas[codigo] || 0;
+      const ent = entradas[codNorm] || 0;
+      const sal = salidas[codNorm] || 0;
 
       const nuevoInicial = nuevoReal - ent + sal;
 
-      await setDoc(doc(db, "almacenes/almacen_zapata/ajustes", codigo), {
-        codigo,
+      await setDoc(doc(db, "almacenes/almacen_zapata/ajustes", codNorm), {
+        codigo: codNorm,
         inventarioInicial: nuevoInicial,
         lastUpdate: new Date().toISOString()
       });
