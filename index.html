@@ -2,53 +2,78 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Inventario – Entradas vs Salidas</title>
+<title>Inventario Real – Almacén Zapata</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
- body{
-   font-family: Arial;
-   background:#f4f4f4;
-   padding:20px;
- }
- h2{
-   color:#00416A;
-   font-size:26px;
-   margin-bottom:20px;
- }
- table{
-   width:100%;
-   border-collapse:collapse;
-   background:white;
-   margin-top:10px;
- }
- th,td{
-   border:1px solid #ccc;
-   padding:8px;
-   text-align:center;
-   font-size:14px;
- }
- th{
-   background:#00416A;
-   color:white;
- }
- .positivo{color:green; font-weight:bold;}
- .negativo{color:red; font-weight:bold;}
+body{
+  font-family: 'Poppins',sans-serif;
+  background:#f4f4f4;
+  padding:20px;
+}
+h2{
+  color:#00416A;
+  font-size:28px;
+  margin-bottom:20px;
+  text-align:center;
+}
+table{
+  width:100%;
+  border-collapse:collapse;
+  background:white;
+  margin-top:10px;
+}
+th,td{
+  border:1px solid #ccc;
+  padding:8px;
+  text-align:center;
+  font-size:13px;
+}
+th{
+  background:#00416A;
+  color:white;
+}
+.positivo{ color:green; font-weight:bold; }
+.negativo{ color:red; font-weight:bold; }
+
+input[type='number']{
+  width:80px;
+  padding:4px;
+  border-radius:5px;
+  border:1px solid #aaa;
+}
+button{
+  padding:5px 10px;
+  background:#00416A;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+button:hover{
+  background:#006199;
+}
+.proveedor-row{
+  background:#d9e7f5;
+  font-weight:bold;
+}
 </style>
 </head>
 
 <body>
 
-<h2>Inventario – Entradas vs Salidas</h2>
+<h2>Inventario Real – Almacén Zapata</h2>
 
 <table>
 <thead>
 <tr>
   <th>Código</th>
   <th>Descripción</th>
+  <th>Inicial</th>
   <th>Entradas</th>
   <th>Salidas</th>
-  <th>Diferencia</th>
+  <th>Inventario Real</th>
+  <th>Ajustar Inicial</th>
 </tr>
 </thead>
 
@@ -57,13 +82,12 @@
 
 <script type="module">
 
-// ----------------------------------------------------------
+// --------------------------------------------------------------
 // FIREBASE
-// ----------------------------------------------------------
+// --------------------------------------------------------------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, query, where,
-  getDocs, onSnapshot
+  getFirestore, collection, doc, setDoc, getDocs, onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -78,59 +102,69 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// ----------------------------------------------------------
+// --------------------------------------------------------------
 // VARIABLES
-// ----------------------------------------------------------
+// --------------------------------------------------------------
 let productos = {};
 let entradas = {};
 let salidas = {};
+let iniciales = {};
 
 let listos = {
   productos:false,
   entradas:false,
-  salidas:false
+  salidas:false,
+  iniciales:false
 };
 
-const fechaCorte = new Date("2025-11-24T00:00:00");
+function norm(c){ return (c||"").toString().trim().padStart(12,"0"); }
 
-function norm(c){
-  return (c||"").toString().trim().padStart(12,"0");
-}
-
-// ----------------------------------------------------------
-// 1. PRODUCTOS
-// ----------------------------------------------------------
+// --------------------------------------------------------------
+// 1. CARGAR PRODUCTOS (Para: proveedor + descripción)
+// --------------------------------------------------------------
 async function cargarProductos(){
   const snap = await getDocs(collection(db,"productos"));
-
   snap.forEach(d=>{
     const x = d.data();
     const codigo = norm(x.codigoBarra || x.codigo);
     productos[codigo] = {
-      descripcion: x.concepto || x.descripcion || "-"
+      descripcion: x.concepto || x.descripcion || "-",
+      proveedor: x.proveedor || "SIN PROVEEDOR"
     };
   });
-
   listos.productos = true;
   intentar();
 }
 
-// ----------------------------------------------------------
-// 2. ENTRADAS
-// ----------------------------------------------------------
+// --------------------------------------------------------------
+// 2. CARGAR ENTRADAS (conceptos_detalle)
+// --------------------------------------------------------------
 function cargarEntradas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/entradas"), snap=>{
+    
     entradas = {};
 
     snap.forEach(docu=>{
       const x = docu.data();
-      const f = x.fecha?.toDate?.() || new Date(x.fecha);
-      if(f < fechaCorte) return;
 
-      (x.productos||[]).forEach(p=>{
-        const codigo = norm(p.codigoBarra || p.codigo);
-        entradas[codigo] = (entradas[codigo] || 0) + Number(p.cantidad||0);
-      });
+      // ENTRADAS REALES (conceptos_detalle)
+      if (Array.isArray(x.conceptos_detalle)) {
+        x.conceptos_detalle.forEach(item => {
+          const codigo = norm(item.codigo || item.productoId || item.noIdentificacion);
+          const cant = Number(item.cantidad || 0);
+          entradas[codigo] = (entradas[codigo] || 0) + cant;
+        });
+      }
+
+      // COMPATIBILIDAD CON VERSIONES ANTIGUAS
+      if (Array.isArray(x.productos)) {
+        x.productos.forEach(item=>{
+          const codigo = norm(item.codigoBarra || item.codigo);
+          const cant = Number(item.cantidad || 0);
+          entradas[codigo] = (entradas[codigo] || 0) + cant;
+        });
+      }
+
     });
 
     listos.entradas = true;
@@ -138,22 +172,25 @@ function cargarEntradas(){
   });
 }
 
-// ----------------------------------------------------------
-// 3. SALIDAS
-// ----------------------------------------------------------
+// --------------------------------------------------------------
+// 3. CARGAR SALIDAS (salidas1.0 → articulos[])
+// --------------------------------------------------------------
 function cargarSalidas(){
   onSnapshot(collection(db,"almacenes/almacen_zapata/salidas1.0"), snap=>{
+    
     salidas = {};
 
     snap.forEach(docu=>{
       const x = docu.data();
-      const f = x.timestamp?.toDate?.() || new Date(x.timestamp);
-      if(f < fechaCorte) return;
 
-      (x.articulos||[]).forEach(p=>{
-        const codigo = norm(p.codigoBarra || p.codigo);
-        salidas[codigo] = (salidas[codigo] || 0) + Number(p.cantidad||0);
-      });
+      if (Array.isArray(x.articulos)) {
+        x.articulos.forEach(item => {
+          const codigo = norm(item.codigo);
+          const cant = Number(item.cantidad || 0);
+          salidas[codigo] = (salidas[codigo] || 0) + cant;
+        });
+      }
+
     });
 
     listos.salidas = true;
@@ -161,51 +198,131 @@ function cargarSalidas(){
   });
 }
 
-// ----------------------------------------------------------
-// DIBUJAR (solo productos con movimientos)
-// ----------------------------------------------------------
+// --------------------------------------------------------------
+// 4. CARGAR INVENTARIO INICIAL / AJUSTES
+// --------------------------------------------------------------
+function cargarIniciales(){
+  onSnapshot(collection(db,"almacenes/almacen_zapata/ajustes"), snap=>{
+    iniciales = {};
+    snap.forEach(d=>{
+      const x = d.data();
+      iniciales[norm(x.codigo)] = Number(x.inventarioInicial || 0);
+    });
+    listos.iniciales = true;
+    intentar();
+  });
+}
+
+// --------------------------------------------------------------
+// INTENTAR DIBUJAR
+// --------------------------------------------------------------
 function intentar(){
-  if(!listos.productos || !listos.entradas || !listos.salidas) return;
+  if(!listos.productos || !listos.entradas || !listos.salidas || !listos.iniciales) return;
   dibujar();
 }
 
+// --------------------------------------------------------------
+// DIBUJAR INVENTARIO ORDENADO POR PROVEEDOR
+// --------------------------------------------------------------
 function dibujar(){
   const t = document.getElementById("tablaInventario");
   t.innerHTML = "";
 
-  // Obtener lista de códigos que sí tuvieron movimientos
+  const grupos = {}; // proveedor: [productos]
+
   const codigos = new Set([
+    ...Object.keys(productos),
     ...Object.keys(entradas),
-    ...Object.keys(salidas)
+    ...Object.keys(salidas),
+    ...Object.keys(iniciales)
   ]);
 
   codigos.forEach(codigo=>{
-    const ent = entradas[codigo] || 0;
-    const sal = salidas[codigo] || 0;
-    const dif = ent - sal;
+    const prod = productos[codigo] || {};
+    const proveedor = prod.proveedor || "SIN PROVEEDOR";
 
-    const desc = productos[codigo]?.descripcion || "-";
+    const desc = prod.descripcion || "-";
+    const ini  = iniciales[codigo] || 0;
+    const ent  = entradas[codigo] || 0;
+    const sal  = salidas[codigo] || 0;
 
+    const real = ini + ent - sal;
+
+    if(!grupos[proveedor]) grupos[proveedor] = [];
+
+    grupos[proveedor].push({
+      codigo,
+      descripcion: desc,
+      ini,
+      ent,
+      sal,
+      real
+    });
+  });
+
+  // ORDENAR PROVEEDORES
+  const proveedoresOrdenados = Object.keys(grupos).sort();
+
+  proveedoresOrdenados.forEach(proveedor => {
+
+    // FILA DE TÍTULO DEL PROVEEDOR
     t.innerHTML += `
-      <tr>
-        <td>${codigo}</td>
-        <td>${desc}</td>
-        <td>${ent}</td>
-        <td>${sal}</td>
-        <td class="${dif<0?'negativo':'positivo'}">${dif}</td>
+      <tr class="proveedor-row">
+        <td colspan="7" style="text-align:left;padding:10px;font-size:15px;">
+          PROVEEDOR: ${proveedor}
+        </td>
       </tr>
     `;
+
+    // ORDENAR PRODUCTOS DEL PROVEEDOR POR DESCRIPCIÓN
+    grupos[proveedor].sort((a,b)=> a.descripcion.localeCompare(b.descripcion));
+
+    // AGREGAR PRODUCTOS
+    grupos[proveedor].forEach(item=>{
+      t.innerHTML += `
+        <tr>
+          <td>${item.codigo}</td>
+          <td>${item.descripcion}</td>
+          <td>${item.ini}</td>
+          <td>${item.ent}</td>
+          <td>${item.sal}</td>
+          <td class="${item.real<0?'negativo':'positivo'}">${item.real}</td>
+
+          <td>
+            <input type="number" id="aj_${item.codigo}" value="${item.ini}">
+            <button onclick="guardarAjuste('${item.codigo}')">Guardar</button>
+          </td>
+        </tr>
+      `;
+    });
+
   });
+
 }
 
-// ----------------------------------------------------------
+// --------------------------------------------------------------
+// GUARDAR AJUSTE DE INVENTARIO
+// --------------------------------------------------------------
+window.guardarAjuste = async function(codigo){
+  const v = Number(document.getElementById("aj_"+codigo).value || 0);
+
+  await setDoc(doc(db,"almacenes/almacen_zapata/ajustes",codigo),{
+    codigo,
+    inventarioInicial: v,
+    lastUpdate: new Date().toISOString()
+  });
+
+  alert("Inventario inicial actualizado.");
+};
+
+// --------------------------------------------------------------
 // INICIAR
-// ----------------------------------------------------------
-await cargarProductos();
+// --------------------------------------------------------------
+cargarProductos();
 cargarEntradas();
 cargarSalidas();
+cargarIniciales();
 
 </script>
-
 </body>
 </html>
