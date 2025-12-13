@@ -300,7 +300,7 @@ function dibujar(){
           <td class="${item.real<0?'negativo':'positivo'}">${item.real}</td>
 
           <td>
-            <input type="number" id="aj_${item.codigo}" value="${item.ini}">
+           <input type="number" id="aj_${item.codigo}" placeholder="${item.ini}">
             <button onclick="guardarAjuste('${item.codigo}')">Guardar</button>
           </td>
         </tr>
@@ -312,18 +312,54 @@ function dibujar(){
 }
 
 // --------------------------------------------------------------
-// 6. GUARDAR AJUSTE DE INVENTARIO
+// 6. GUARDAR AJUSTE DE INVENTARIO (INDIVIDUAL) — OPCIONAL
 // --------------------------------------------------------------
 window.guardarAjuste = async function(codigo){
   const v = Number(document.getElementById("aj_"+codigo).value || 0);
 
-  await setDoc(doc(db,"almacenes/almacen_zapata/ajustes",codigo),{
-    codigo,
-    inventarioInicial: v,
-    lastUpdate: new Date().toISOString()
-  });
+  await setDoc(
+    doc(db,"almacenes/almacen_zapata/ajustes",codigo),
+    {
+      codigo,
+      inventarioInicial: v,
+      lastUpdate: new Date().toISOString()
+    },
+    { merge:true }
+  );
+};
 
-  alert("Inventario inicial actualizado.");
+// --------------------------------------------------------------
+// 7. GUARDAR TODOS LOS AJUSTES (BOTÓN ÚNICO)
+// --------------------------------------------------------------
+window.guardarTodosLosAjustes = async function(){
+  const inputs = document.querySelectorAll("input[id^='aj_']");
+  let guardados = 0;
+
+  for(const input of inputs){
+    if(input.value === "") continue;
+
+    const codigo = input.id.replace("aj_","");
+    const valor = Number(input.value);
+    if(isNaN(valor)) continue;
+
+    await setDoc(
+      doc(db,"almacenes/almacen_zapata/ajustes",codigo),
+      {
+        codigo,
+        inventarioInicial: valor,
+        lastUpdate: new Date().toISOString()
+      },
+      { merge:true }
+    );
+
+    guardados++;
+  }
+
+  alert(
+    guardados === 0
+      ? "No se detectaron ajustes para guardar."
+      : `Se guardaron ${guardados} ajustes correctamente.`
+  );
 };
 
 // --------------------------------------------------------------
@@ -333,7 +369,12 @@ cargarProductos();
 cargarEntradas();
 cargarSalidas();
 cargarIniciales();
-
 </script>
+  <br>
+<div style="text-align:center;margin-top:20px;">
+  <button onclick="guardarTodosLosAjustes()" style="padding:10px 20px;font-size:15px;">
+    Guardar ajustes realizados
+  </button>
+</div>
 </body>
 </html>
